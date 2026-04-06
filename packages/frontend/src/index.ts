@@ -296,7 +296,12 @@ async function splitPane(
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
-  const newPane = await createPane(sdk);
+  let newPane: Pane;
+  try {
+    newPane = await createPane(sdk);
+  } catch {
+    return;
+  }
 
   // Replace the active leaf with a split
   tab.root = replaceLeaf(tab.root, activePaneId, (leaf) => {
@@ -377,11 +382,12 @@ async function closePane(sdk: CaidoSDK, paneId?: string): Promise<void> {
 
   // Set new active pane
   const remaining = getAllPanes(tab.root);
-  if (remaining.length > 0) {
-    setActivePane(remaining[0]!.id);
+  const first = remaining[0];
+  if (first) {
+    setActivePane(first.id);
     setTimeout(() => {
       fitAllPanes(tab.root);
-      remaining[0]!.terminal.focus();
+      first.terminal.focus();
     }, 50);
   }
 }
@@ -578,7 +584,7 @@ function renderTabBar(sdk: CaidoSDK): void {
       const input = document.createElement("input");
       input.className = "ss-tab__rename-input";
       input.value = tab.name;
-      input.addEventListener("blur", () => { tab.name = input.value || tab.name; renderTabBar(sdk); });
+      input.addEventListener("blur", () => { tab.name = input.value || tab.name; renderTabBar(sdk); }, { once: true });
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") input.blur();
         if (ev.key === "Escape") { input.value = tab.name; input.blur(); }
@@ -841,23 +847,27 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
   const firstInput = modal.querySelector("input") as HTMLInputElement;
   firstInput?.focus(); firstInput?.select();
 
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  const closeModal = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
   modal.addEventListener("click", (e) => {
     const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
     if (!action) return;
-    if (action === "cancel") { overlay.remove(); return; }
-    if (action === "reset" && preset) { resetPreset(preset.id); overlay.remove(); renderPresetBar(sdk); return; }
-    if (action === "delete" && preset) { deleteCustomPreset(preset.id); overlay.remove(); renderPresetBar(sdk); return; }
+    if (action === "cancel") { closeModal(); return; }
+    if (action === "reset" && preset) { resetPreset(preset.id); closeModal(); renderPresetBar(sdk); return; }
+    if (action === "delete" && preset) { deleteCustomPreset(preset.id); closeModal(); renderPresetBar(sdk); return; }
     if (action === "save") {
       const v = (f: string) => (modal.querySelector(`[data-field=${f}]`) as HTMLInputElement).value.trim();
       const name = v("name");
       if (!name) { (modal.querySelector("[data-field=name]") as HTMLInputElement).focus(); return; }
       if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom }); }
       else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color") }); }
-      overlay.remove(); renderPresetBar(sdk);
+      closeModal(); renderPresetBar(sdk);
     }
   });
-  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", onKey); } };
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
   document.addEventListener("keydown", onKey);
 }
 
@@ -899,7 +909,7 @@ export const init = (sdk: CaidoSDK) => {
   sdk.commandPalette.register(Commands.search);
 
   // Keyboard shortcuts
-  sdk.shortcuts.register(Commands.togglePanel, ["Ctrl", "J"]);
+  sdk.shortcuts.register(Commands.togglePanel, ["Cmd", "J"]);
 
   setupEvents(sdk);
   setTimeout(() => createTab(sdk), 300);

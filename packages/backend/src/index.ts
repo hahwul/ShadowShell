@@ -184,6 +184,7 @@ interface TerminalSession {
   port: number;
   presetName: string;
   cwd: string;
+  isTerminating: boolean;
 }
 
 interface TerminalOutputEvent {
@@ -233,11 +234,16 @@ function ensureRelayScript(): string {
 
 // --- Framed message helpers (4-byte length prefix) ---
 
-function frameSend(sock: Socket, obj: Record<string, unknown>): void {
-  const payload = Buffer.from(JSON.stringify(obj), "utf-8");
-  const header = Buffer.alloc(4);
-  header.writeUInt32BE(payload.length, 0);
-  sock.write(Buffer.concat([header, payload]));
+function frameSend(sock: Socket, obj: Record<string, unknown>): boolean {
+  try {
+    const payload = Buffer.from(JSON.stringify(obj), "utf-8");
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(payload.length, 0);
+    sock.write(Buffer.concat([header, payload]));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // --- API ---
@@ -264,6 +270,7 @@ function createTerminal(
     port,
     presetName: presetName || "",
     cwd: workingDir,
+    isTerminating: false,
   };
 
   terminals.set(id, session);
@@ -272,8 +279,15 @@ function createTerminal(
     proc.stdout.on("data", (data: Buffer) => {
       const text = data.toString();
       if (text.includes("READY:")) {
+        if (session.isTerminating) return;
+
         // Relay is ready, connect via TCP
         const sock = connect(port, "127.0.0.1", () => {
+          if (session.isTerminating) {
+            // Socket connected after termination, just destroy it
+            sock.destroy();
+            return;
+          }
           session.socket = sock;
           sdk.console.log(`[relay] connected to port ${port}`);
 
@@ -283,7 +297,9 @@ function createTerminal(
           // Send preset command if any
           if (command) {
             setTimeout(() => {
-              frameSend(sock, { type: "input", data: command + "\n" });
+              if (!session.isTerminating) {
+                frameSend(sock, { type: "input", data: command + "\n" });
+              }
             }, 500);
           }
         });
@@ -357,10 +373,11 @@ function destroyTerminal(
 ): boolean {
   const session = terminals.get(terminalId);
   if (!session) return false;
+  session.isTerminating = true;
   if (session.socket) {
-    session.socket.destroy();
+    try { session.socket.destroy(); } catch { /* ignore */ }
   }
-  session.process.kill();
+  try { session.process.kill(); } catch { /* ignore */ }
   terminals.delete(terminalId);
   sdk.console.log(`Terminal destroyed: ${terminalId}`);
   return true;
@@ -368,8 +385,11 @@ function destroyTerminal(
 
 function destroyAllTerminals(sdk: SDK<API, BackendEvents>): void {
   for (const [, session] of terminals) {
-    if (session.socket) session.socket.destroy();
-    session.process.kill();
+    session.isTerminating = true;
+    if (session.socket) {
+      try { session.socket.destroy(); } catch { /* ignore */ }
+    }
+    try { session.process.kill(); } catch { /* ignore */ }
   }
   terminals.clear();
 }
