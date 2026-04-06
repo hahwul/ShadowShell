@@ -1,5 +1,5 @@
 import type { Caido } from "@caido/sdk-frontend";
-import type { API } from "shadowshell-backend";
+import type { API } from "backend";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -29,7 +29,7 @@ const Commands = {
   search: "shadowshell.search",
 } as const;
 
-const THEME = {
+const DARK_THEME = {
   background: "#1a1a2e",
   foreground: "#e0e0e0",
   cursor: "#e0e0e0",
@@ -53,6 +53,39 @@ const THEME = {
   brightCyan: "#3bc9db",
   brightWhite: "#f8f9fa",
 };
+
+const LIGHT_THEME = {
+  background: "#fafafa",
+  foreground: "#1a1a2e",
+  cursor: "#1a1a2e",
+  cursorAccent: "#fafafa",
+  selectionBackground: "#c8d6fa",
+  selectionForeground: "#1a1a2e",
+  black: "#1a1a2e",
+  red: "#e03131",
+  green: "#2f9e44",
+  yellow: "#e67700",
+  blue: "#3b5bdb",
+  magenta: "#ae3ec9",
+  cyan: "#0c8599",
+  white: "#f8f9fa",
+  brightBlack: "#868e96",
+  brightRed: "#ff6b6b",
+  brightGreen: "#51cf66",
+  brightYellow: "#ffd43b",
+  brightBlue: "#5c7cfa",
+  brightMagenta: "#cc5de8",
+  brightCyan: "#22b8cf",
+  brightWhite: "#ffffff",
+};
+
+function isDarkMode(): boolean {
+  return document.documentElement.getAttribute("data-mode") === "dark";
+}
+
+function getTheme() {
+  return isDarkMode() ? DARK_THEME : LIGHT_THEME;
+}
 
 let fontSize = 13;
 
@@ -124,7 +157,7 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string):
     fontSize,
     fontFamily:
       "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
-    theme: THEME,
+    theme: getTheme(),
     cursorBlink: true,
     cursorStyle: "bar",
     scrollback: 5000,
@@ -889,4 +922,24 @@ export const init = (sdk: CaidoSDK) => {
 
   setupEvents(sdk);
   setTimeout(() => createTab(sdk), 300);
+
+  // Watch for Caido dark/light mode changes (update xterm terminal theme)
+  const observer = new MutationObserver(() => {
+    const theme = getTheme();
+    for (const tab of tabs.values()) {
+      const applyToNode = (node: PaneNode) => {
+        if (node.type === "leaf") {
+          node.pane.terminal.options.theme = theme;
+        } else {
+          applyToNode(node.first);
+          applyToNode(node.second);
+        }
+      };
+      applyToNode(tab.root);
+    }
+  });
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-mode"],
+  });
 };
