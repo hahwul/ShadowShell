@@ -42,7 +42,18 @@ All built-in presets can be customized (command, name, description), and you can
 
 ## Installation
 
-Install from the Caido plugin store, or build from source:
+### Community Store (Under Review)
+
+> [!NOTE]
+> ShadowShell is currently under review for the Caido Community Store. Once approved, you will be able to install it directly from the store.
+
+Go to **Plugins** > **Community Store** in Caido. Search **"ShadowShell"** and click **Install**.
+
+### Manual Installation
+
+Download `plugin_package.zip` from the [Releases](https://github.com/hahwul/ShadowShell/releases) page, then go to **Plugins** > **Install Package** in Caido and select the downloaded file.
+
+### Build from Source
 
 ```bash
 pnpm install
