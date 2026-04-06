@@ -1,6 +1,6 @@
 # ShadowShell
 
-Multi-terminal plugin for [Caido](https://caido.io) with AI preset support. Press `Cmd+J` to summon a terminal from the shadow — anywhere in Caido, instantly. Manage multiple shell tabs and launch Claude, Gemini, Codex and more with one click.
+Multi-terminal plugin for [Caido](https://caido.io). Press `Cmd+J` to summon a quick terminal from the shadow — anywhere in Caido, instantly. Open the ShadowShell tab for the full experience: multi-tab terminals, split panes, and AI presets for Claude, Gemini, Codex and more.
 
 ![ShadowShell](./resources/1.webp)
 
