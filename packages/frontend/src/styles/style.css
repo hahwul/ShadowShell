@@ -1,0 +1,298 @@
+/* ============================================
+   ShadowShell - Terminal Plugin for Caido
+   ============================================ */
+
+/* --- Root Layout --- */
+.ss-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #16162a;
+  color: #e0e0e0;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* --- Header with Presets --- */
+.ss-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: #1e1e3a;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.ss-logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ss-logo__icon {
+  display: flex;
+  align-items: center;
+  color: #a0a0c0;
+}
+
+.ss-logo__text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #a0a0c0;
+  letter-spacing: 0.5px;
+}
+
+.ss-preset-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.ss-preset-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ss-preset-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid #3a3a5e;
+  border-radius: 4px;
+  background: #22223a;
+  color: #c0c0d8;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.ss-preset-btn:hover {
+  background: #2e2e4e;
+  border-color: var(--preset-color, #5c7cfa);
+  color: var(--preset-color, #5c7cfa);
+}
+
+.ss-preset-btn:active {
+  transform: scale(0.97);
+}
+
+.ss-preset-btn__icon {
+  display: flex;
+  align-items: center;
+  color: inherit;
+}
+
+.ss-preset-btn__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ss-preset-btn__name {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* --- Tab Bar --- */
+.ss-tab-bar {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  background: #1a1a30;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  min-height: 32px;
+}
+
+.ss-tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ss-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  margin: 2px 1px;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: #808098;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  border-bottom: none;
+  user-select: none;
+}
+
+.ss-tab:hover {
+  background: #22223a;
+  color: #c0c0d8;
+}
+
+.ss-tab--active {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-color: #2a2a4a;
+}
+
+.ss-tab__icon {
+  display: flex;
+  align-items: center;
+  color: inherit;
+}
+
+.ss-tab__icon svg {
+  width: 10px;
+  height: 10px;
+}
+
+.ss-tab__name {
+  font-size: 12px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-tab__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #606078;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.1s ease;
+}
+
+.ss-tab__close svg {
+  width: 10px;
+  height: 10px;
+}
+
+.ss-tab__close:hover {
+  background: #ff6b6b33;
+  color: #ff6b6b;
+}
+
+.ss-tab__rename-input {
+  background: #22223a;
+  border: 1px solid #5c7cfa;
+  border-radius: 2px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 0 4px;
+  width: 100px;
+  outline: none;
+}
+
+.ss-tab-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 2px 4px;
+  border: 1px dashed #3a3a5e;
+  border-radius: 4px;
+  background: transparent;
+  color: #606078;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.ss-tab-add:hover {
+  background: #22223a;
+  border-color: #5c7cfa;
+  color: #5c7cfa;
+}
+
+/* --- Terminal Area --- */
+.ss-terminal-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #1a1a2e;
+}
+
+.ss-terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.ss-terminal-container .xterm {
+  height: 100%;
+}
+
+.ss-terminal-container .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a5e #1a1a2e;
+}
+
+.ss-terminal-container .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ss-terminal-container .xterm-viewport::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+.ss-terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #3a3a5e;
+  border-radius: 3px;
+}
+
+.ss-terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #4a4a6e;
+}
+
+/* --- Status Bar --- */
+.ss-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 3px 12px;
+  background: #1e1e3a;
+  border-top: 1px solid #2a2a4a;
+  flex-shrink: 0;
+  min-height: 22px;
+}
+
+.ss-status__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.ss-status__label {
+  color: #606078;
+}
+
+.ss-status__value {
+  color: #a0a0c0;
+}
+
+.ss-status__text {
+  color: #606078;
+  font-size: 11px;
+}

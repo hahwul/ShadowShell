@@ -1,0 +1,21 @@
+{
+  "name": "shadowshell-frontend",
+  "version": "0.1.0",
+  "description": "ShadowShell frontend - terminal UI",
+  "author": "hahwul",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@caido/sdk-frontend": "0.41.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
+  },
+  "devDependencies": {
+    "@caido/sdk-backend": "0.41.0",
+    "shadowshell-backend": "workspace:*"
+  }
+}

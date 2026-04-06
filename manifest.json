@@ -1,0 +1,30 @@
+{
+  "id": "shadowshell",
+  "name": "ShadowShell",
+  "version": "0.1.0",
+  "description": "Multi-terminal plugin for Caido with AI preset support. Manage multiple shell tabs and launch Claude, Gemini, Codex and more with one click.",
+  "author": {
+    "name": "hahwul",
+    "email": "hahwul@gmail.com",
+    "url": "https://www.hahwul.com"
+  },
+  "plugins": [
+    {
+      "kind": "frontend",
+      "id": "shadowshell-frontend",
+      "name": "ShadowShell",
+      "entrypoint": "frontend/script.js",
+      "style": "frontend/style.css",
+      "backend": {
+        "id": "shadowshell-backend"
+      }
+    },
+    {
+      "kind": "backend",
+      "id": "shadowshell-backend",
+      "name": "ShadowShell Backend",
+      "runtime": "javascript",
+      "entrypoint": "backend/script.js"
+    }
+  ]
+}
