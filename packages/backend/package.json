@@ -5,10 +5,11 @@
   "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
     "@caido/sdk-backend": "^0.46.0",
+    "@types/node": "^20.0.0",
     "vitest": "^2.1.8"
   }
 }

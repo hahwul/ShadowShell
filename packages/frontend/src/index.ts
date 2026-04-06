@@ -1,5 +1,5 @@
 import type { Caido } from "@caido/sdk-frontend";
-import type { API } from "backend";
+import type { API, BackendEvents } from "backend";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -16,7 +16,7 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import "./styles/style.css";
 
-type CaidoSDK = Caido<API>;
+type CaidoSDK = Caido<API, BackendEvents>;
 
 const PAGE_PATH = "/shadowshell" as const;
 const Commands = {
