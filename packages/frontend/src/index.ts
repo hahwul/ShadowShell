@@ -29,62 +29,43 @@ const Commands = {
   search: "shadowshell.search",
 } as const;
 
-const DARK_THEME = {
-  background: "#1a1a2e",
-  foreground: "#e0e0e0",
-  cursor: "#e0e0e0",
-  cursorAccent: "#1a1a2e",
-  selectionBackground: "#3a3a5e",
-  selectionForeground: "#ffffff",
-  black: "#1a1a2e",
-  red: "#ff6b6b",
-  green: "#51cf66",
-  yellow: "#ffd43b",
-  blue: "#5c7cfa",
-  magenta: "#cc5de8",
-  cyan: "#22b8cf",
-  white: "#e0e0e0",
-  brightBlack: "#495057",
-  brightRed: "#ff8787",
-  brightGreen: "#69db7c",
-  brightYellow: "#ffe066",
-  brightBlue: "#748ffc",
-  brightMagenta: "#da77f2",
-  brightCyan: "#3bc9db",
-  brightWhite: "#f8f9fa",
-};
-
-const LIGHT_THEME = {
-  background: "#fafafa",
-  foreground: "#1a1a2e",
-  cursor: "#1a1a2e",
-  cursorAccent: "#fafafa",
-  selectionBackground: "#c8d6fa",
-  selectionForeground: "#1a1a2e",
-  black: "#1a1a2e",
-  red: "#e03131",
-  green: "#2f9e44",
-  yellow: "#e67700",
-  blue: "#3b5bdb",
-  magenta: "#ae3ec9",
-  cyan: "#0c8599",
-  white: "#f8f9fa",
-  brightBlack: "#868e96",
-  brightRed: "#ff6b6b",
-  brightGreen: "#51cf66",
-  brightYellow: "#ffd43b",
-  brightBlue: "#5c7cfa",
-  brightMagenta: "#cc5de8",
-  brightCyan: "#22b8cf",
-  brightWhite: "#ffffff",
-};
+function getCaidoVar(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
 
 function isDarkMode(): boolean {
   return document.documentElement.getAttribute("data-mode") === "dark";
 }
 
 function getTheme() {
-  return isDarkMode() ? DARK_THEME : LIGHT_THEME;
+  const bg = getCaidoVar("--p-surface-950", isDarkMode() ? "#09090b" : "#fafafa");
+  const fg = getCaidoVar("--p-text-color", isDarkMode() ? "#e4e4e7" : "#18181b");
+  const sel = getCaidoVar("--p-surface-700", isDarkMode() ? "#3f3f46" : "#d4d4d8");
+
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    cursorAccent: bg,
+    selectionBackground: sel,
+    selectionForeground: isDarkMode() ? "#fafafa" : "#18181b",
+    black: isDarkMode() ? "#09090b" : "#18181b",
+    red: isDarkMode() ? "#f87171" : "#dc2626",
+    green: isDarkMode() ? "#4ade80" : "#16a34a",
+    yellow: isDarkMode() ? "#facc15" : "#ca8a04",
+    blue: isDarkMode() ? "#818cf8" : "#6366f1",
+    magenta: isDarkMode() ? "#c084fc" : "#9333ea",
+    cyan: isDarkMode() ? "#22d3ee" : "#0891b2",
+    white: isDarkMode() ? "#e4e4e7" : "#f4f4f5",
+    brightBlack: isDarkMode() ? "#71717a" : "#a1a1aa",
+    brightRed: "#fca5a5",
+    brightGreen: "#86efac",
+    brightYellow: "#fde68a",
+    brightBlue: "#a5b4fc",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: isDarkMode() ? "#fafafa" : "#ffffff",
+  };
 }
 
 let fontSize = 13;
@@ -585,7 +566,7 @@ function renderTabBar(sdk: CaidoSDK): void {
     `;
 
     tabEl.addEventListener("click", (e) => {
-      if (!(e.target as HTMLElement).closest(".ss-tab__close")) switchToTab(sdk, tab.id);
+      if (!(e.target as HTMLElement).closest(".ss-tab__close") && tab.id !== activeTabId) switchToTab(sdk, tab.id);
     });
     tabEl.querySelector(".ss-tab__close")!.addEventListener("click", (e) => {
       e.stopPropagation();

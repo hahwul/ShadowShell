@@ -1,5 +1,6 @@
 /* ============================================
    ShadowShell - Terminal Plugin for Caido
+   Uses Caido's CSS variables for native look
    ============================================ */
 
 /* --- Root Layout --- */
@@ -8,8 +9,8 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #16162a;
-  color: #e0e0e0;
+  background: var(--p-surface-950, #09090b);
+  color: var(--p-text-color, #e4e4e7);
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -20,8 +21,8 @@
   align-items: center;
   gap: 12px;
   padding: 6px 12px;
-  background: #1e1e3a;
-  border-bottom: 1px solid #2a2a4a;
+  background: var(--p-surface-900, #18181b);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
   flex-shrink: 0;
 }
 
@@ -35,13 +36,13 @@
 .ss-logo__icon {
   display: flex;
   align-items: center;
-  color: #a0a0c0;
+  color: var(--p-text-muted-color, #a1a1aa);
 }
 
 .ss-logo__text {
   font-size: 13px;
   font-weight: 600;
-  color: #a0a0c0;
+  color: var(--p-text-muted-color, #a1a1aa);
   letter-spacing: 0.5px;
 }
 
@@ -64,10 +65,10 @@
   align-items: center;
   gap: 4px;
   padding: 3px 10px;
-  border: 1px solid #3a3a5e;
+  border: 1px solid var(--p-surface-700, #3f3f46);
   border-radius: 4px;
-  background: #22223a;
-  color: #c0c0d8;
+  background: var(--p-surface-800, #27272a);
+  color: var(--p-surface-300, #d4d4d8);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -75,9 +76,9 @@
 }
 
 .ss-preset-btn:hover {
-  background: #2e2e4e;
-  border-color: var(--preset-color, #5c7cfa);
-  color: var(--preset-color, #5c7cfa);
+  background: var(--p-surface-700, #3f3f46);
+  border-color: var(--preset-color, var(--p-primary-color, #818cf8));
+  color: var(--preset-color, var(--p-primary-color, #818cf8));
 }
 
 .ss-preset-btn:active {
@@ -105,8 +106,8 @@
   display: flex;
   align-items: center;
   padding: 0 4px;
-  background: #1a1a30;
-  border-bottom: 1px solid #2a2a4a;
+  background: var(--p-surface-900, #18181b);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
   flex-shrink: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -126,7 +127,7 @@
   margin: 2px 1px;
   border-radius: 4px 4px 0 0;
   background: transparent;
-  color: #808098;
+  color: var(--p-surface-500, #71717a);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -137,14 +138,14 @@
 }
 
 .ss-tab:hover {
-  background: #22223a;
-  color: #c0c0d8;
+  background: var(--p-surface-800, #27272a);
+  color: var(--p-surface-300, #d4d4d8);
 }
 
 .ss-tab--active {
-  background: #1a1a2e;
-  color: #e0e0e0;
-  border-color: #2a2a4a;
+  background: var(--p-surface-950, #09090b);
+  color: var(--p-text-color, #e4e4e7);
+  border-color: var(--p-surface-700, #3f3f46);
 }
 
 .ss-tab__icon {
@@ -174,7 +175,7 @@
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: #606078;
+  color: var(--p-surface-500, #71717a);
   cursor: pointer;
   padding: 0;
   transition: all 0.1s ease;
@@ -186,15 +187,15 @@
 }
 
 .ss-tab__close:hover {
-  background: #ff6b6b33;
-  color: #ff6b6b;
+  background: #ef444433;
+  color: #ef4444;
 }
 
 .ss-tab__rename-input {
-  background: #22223a;
-  border: 1px solid #5c7cfa;
+  background: var(--p-surface-800, #27272a);
+  border: 1px solid var(--p-primary-color, #818cf8);
   border-radius: 2px;
-  color: #e0e0e0;
+  color: var(--p-text-color, #e4e4e7);
   font-size: 12px;
   padding: 0 4px;
   width: 100px;
@@ -208,10 +209,10 @@
   width: 24px;
   height: 24px;
   margin: 2px 4px;
-  border: 1px dashed #3a3a5e;
+  border: 1px dashed var(--p-surface-700, #3f3f46);
   border-radius: 4px;
   background: transparent;
-  color: #606078;
+  color: var(--p-surface-500, #71717a);
   font-size: 16px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -219,9 +220,9 @@
 }
 
 .ss-tab-add:hover {
-  background: #22223a;
-  border-color: #5c7cfa;
-  color: #5c7cfa;
+  background: var(--p-surface-800, #27272a);
+  border-color: var(--p-primary-color, #818cf8);
+  color: var(--p-primary-color, #818cf8);
 }
 
 /* --- Terminal Area --- */
@@ -229,7 +230,7 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #1a1a2e;
+  background: var(--p-surface-950, #09090b);
 }
 
 .ss-terminal-container {
@@ -255,12 +256,10 @@
   height: 100%;
 }
 
-/* Only show active border when inside a split (multiple panes) */
 .ss-split .ss-pane--active {
-  border-color: #5c7cfa44;
+  border-color: rgba(129, 140, 248, 0.27);
 }
 
-/* Single pane (direct child of container, no split) takes full area */
 .ss-terminal-container > .ss-pane {
   border: none;
   width: 100%;
@@ -285,13 +284,13 @@
 /* --- Divider --- */
 .ss-divider {
   flex-shrink: 0;
-  background: #2a2a4a;
+  background: var(--p-surface-700, #3f3f46);
   transition: background 0.1s;
   z-index: 1;
 }
 
 .ss-divider:hover {
-  background: #5c7cfa;
+  background: var(--p-primary-color, #818cf8);
 }
 
 .ss-divider--horizontal {
@@ -310,8 +309,8 @@
   align-items: center;
   gap: 2px;
   padding: 3px 8px;
-  background: #1a1a30;
-  border-bottom: 1px solid #2a2a4a;
+  background: var(--p-surface-900, #18181b);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
   flex-shrink: 0;
 }
 
@@ -324,21 +323,21 @@
   border: none;
   border-radius: 3px;
   background: transparent;
-  color: #808098;
+  color: var(--p-surface-500, #71717a);
   cursor: pointer;
   padding: 0;
   transition: all 0.1s;
 }
 
 .ss-toolbar__btn:hover {
-  background: #2e2e4e;
-  color: #e0e0e0;
+  background: var(--p-surface-700, #3f3f46);
+  color: var(--p-text-color, #e4e4e7);
 }
 
 .ss-toolbar__sep {
   width: 1px;
   height: 14px;
-  background: #2a2a4a;
+  background: var(--p-surface-700, #3f3f46);
   margin: 0 4px;
 }
 
@@ -348,30 +347,30 @@
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: #1e1e3a;
-  border-bottom: 1px solid #2a2a4a;
+  background: var(--p-surface-900, #18181b);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
   flex-shrink: 0;
 }
 
 .ss-search-bar__input {
   flex: 1;
   max-width: 300px;
-  background: #16162a;
-  border: 1px solid #3a3a5e;
+  background: var(--p-surface-950, #09090b);
+  border: 1px solid var(--p-surface-700, #3f3f46);
   border-radius: 4px;
   padding: 4px 8px;
-  color: #e0e0e0;
+  color: var(--p-text-color, #e4e4e7);
   font-size: 12px;
   outline: none;
 }
 
 .ss-search-bar__input:focus {
-  border-color: #5c7cfa;
+  border-color: var(--p-primary-color, #818cf8);
 }
 
 .ss-terminal-container .xterm-viewport {
   scrollbar-width: thin;
-  scrollbar-color: #3a3a5e #1a1a2e;
+  scrollbar-color: var(--p-surface-700, #3f3f46) var(--p-surface-950, #09090b);
 }
 
 .ss-terminal-container .xterm-viewport::-webkit-scrollbar {
@@ -379,16 +378,16 @@
 }
 
 .ss-terminal-container .xterm-viewport::-webkit-scrollbar-track {
-  background: #1a1a2e;
+  background: var(--p-surface-950, #09090b);
 }
 
 .ss-terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #3a3a5e;
+  background: var(--p-surface-700, #3f3f46);
   border-radius: 3px;
 }
 
 .ss-terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: #4a4a6e;
+  background: var(--p-surface-600, #52525b);
 }
 
 /* --- Status Bar --- */
@@ -397,8 +396,8 @@
   align-items: center;
   gap: 16px;
   padding: 3px 12px;
-  background: #1e1e3a;
-  border-top: 1px solid #2a2a4a;
+  background: var(--p-surface-900, #18181b);
+  border-top: 1px solid var(--p-surface-700, #3f3f46);
   flex-shrink: 0;
   min-height: 22px;
 }
@@ -411,15 +410,15 @@
 }
 
 .ss-status__label {
-  color: #606078;
+  color: var(--p-surface-500, #71717a);
 }
 
 .ss-status__value {
-  color: #a0a0c0;
+  color: var(--p-surface-400, #a1a1aa);
 }
 
 .ss-status__text {
-  color: #606078;
+  color: var(--p-surface-500, #71717a);
   font-size: 11px;
 }
 
@@ -444,8 +443,8 @@
 }
 
 .ss-modal {
-  background: #1e1e3a;
-  border: 1px solid #3a3a5e;
+  background: var(--p-surface-900, #18181b);
+  border: 1px solid var(--p-surface-700, #3f3f46);
   border-radius: 8px;
   width: 400px;
   max-width: 90vw;
@@ -456,8 +455,8 @@
   padding: 12px 16px;
   font-size: 14px;
   font-weight: 600;
-  color: #e0e0e0;
-  border-bottom: 1px solid #2a2a4a;
+  color: var(--p-text-color, #e4e4e7);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
 }
 
 .ss-modal__body {
@@ -475,16 +474,16 @@
 
 .ss-modal__field > span {
   font-size: 11px;
-  color: #808098;
+  color: var(--p-surface-500, #71717a);
   font-weight: 500;
 }
 
 .ss-modal__input {
-  background: #16162a;
-  border: 1px solid #3a3a5e;
+  background: var(--p-surface-950, #09090b);
+  border: 1px solid var(--p-surface-700, #3f3f46);
   border-radius: 4px;
   padding: 6px 8px;
-  color: #e0e0e0;
+  color: var(--p-text-color, #e4e4e7);
   font-size: 13px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   outline: none;
@@ -492,7 +491,7 @@
 }
 
 .ss-modal__input:focus {
-  border-color: #5c7cfa;
+  border-color: var(--p-primary-color, #818cf8);
 }
 
 .ss-modal__input--color {
@@ -504,7 +503,7 @@
 
 .ss-modal__footer {
   padding: 10px 16px;
-  border-top: 1px solid #2a2a4a;
+  border-top: 1px solid var(--p-surface-700, #3f3f46);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -516,43 +515,43 @@
 
 .ss-modal__btn {
   padding: 5px 12px;
-  border: 1px solid #3a3a5e;
+  border: 1px solid var(--p-surface-700, #3f3f46);
   border-radius: 4px;
-  background: #22223a;
-  color: #c0c0d8;
+  background: var(--p-surface-800, #27272a);
+  color: var(--p-surface-300, #d4d4d8);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .ss-modal__btn:hover {
-  background: #2e2e4e;
+  background: var(--p-surface-700, #3f3f46);
 }
 
 .ss-modal__btn--primary {
-  background: #5c7cfa;
-  border-color: #5c7cfa;
+  background: var(--p-primary-color, #818cf8);
+  border-color: var(--p-primary-color, #818cf8);
   color: #fff;
 }
 
 .ss-modal__btn--primary:hover {
-  background: #748ffc;
+  background: #6366f1;
 }
 
 .ss-modal__btn--delete {
-  border-color: #ff6b6b44;
-  color: #ff6b6b;
+  border-color: #ef444444;
+  color: #ef4444;
 }
 
 .ss-modal__btn--delete:hover {
-  background: #ff6b6b22;
+  background: #ef444422;
 }
 
 .ss-modal__btn--reset {
-  border-color: #ffd43b44;
-  color: #ffd43b;
+  border-color: #f59e0b44;
+  color: #f59e0b;
 }
 
 .ss-modal__btn--reset:hover {
-  background: #ffd43b22;
+  background: #f59e0b22;
 }
