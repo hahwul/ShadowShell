@@ -6,7 +6,7 @@ export default defineConfig({
   id,
   name: "ShadowShell",
   description:
-    "Multi-terminal plugin for Caido with AI preset support. Manage multiple shell tabs and launch Claude, Gemini, Codex and more with one click.",
+    "Multi-terminal plugin for Caido with AI presets and instant Cmd+J access. Split panes, multiple tabs, and one-click launch for Claude, Gemini, Codex and more.",
   version: "0.1.0",
   author: {
     name: "hahwul",
