@@ -235,12 +235,138 @@
 .ss-terminal-container {
   width: 100%;
   height: 100%;
-  padding: 4px;
   box-sizing: border-box;
 }
 
 .ss-terminal-container .xterm {
   height: 100%;
+}
+
+/* --- Panes --- */
+.ss-pane {
+  flex: 1;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  position: relative;
+}
+
+.ss-pane .xterm {
+  height: 100%;
+}
+
+/* Only show active border when inside a split (multiple panes) */
+.ss-split .ss-pane--active {
+  border-color: #5c7cfa44;
+}
+
+/* Single pane (direct child of container, no split) takes full area */
+.ss-terminal-container > .ss-pane {
+  border: none;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Split Layout --- */
+.ss-split {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.ss-split--horizontal {
+  flex-direction: row;
+}
+
+.ss-split--vertical {
+  flex-direction: column;
+}
+
+/* --- Divider --- */
+.ss-divider {
+  flex-shrink: 0;
+  background: #2a2a4a;
+  transition: background 0.1s;
+  z-index: 1;
+}
+
+.ss-divider:hover {
+  background: #5c7cfa;
+}
+
+.ss-divider--horizontal {
+  width: 3px;
+  cursor: col-resize;
+}
+
+.ss-divider--vertical {
+  height: 3px;
+  cursor: row-resize;
+}
+
+/* --- Toolbar --- */
+.ss-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 8px;
+  background: #1a1a30;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.ss-toolbar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #808098;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.1s;
+}
+
+.ss-toolbar__btn:hover {
+  background: #2e2e4e;
+  color: #e0e0e0;
+}
+
+.ss-toolbar__sep {
+  width: 1px;
+  height: 14px;
+  background: #2a2a4a;
+  margin: 0 4px;
+}
+
+/* --- Search Bar --- */
+.ss-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #1e1e3a;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.ss-search-bar__input {
+  flex: 1;
+  max-width: 300px;
+  background: #16162a;
+  border: 1px solid #3a3a5e;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #e0e0e0;
+  font-size: 12px;
+  outline: none;
+}
+
+.ss-search-bar__input:focus {
+  border-color: #5c7cfa;
 }
 
 .ss-terminal-container .xterm-viewport {
