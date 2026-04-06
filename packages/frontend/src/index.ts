@@ -23,6 +23,7 @@ const Commands = {
   newTab: "shadowshell.new-tab",
   closeTab: "shadowshell.close-tab",
   togglePanel: "shadowshell.toggle",
+  toggleDropup: "shadowshell.toggle-dropup",
   splitVertical: "shadowshell.split-vertical",
   splitHorizontal: "shadowshell.split-horizontal",
   closePane: "shadowshell.close-pane",
@@ -883,6 +884,114 @@ function escapeAttr(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+// --- Drop-up Terminal Panel ---
+
+let dropupPanel: HTMLDivElement | null = null;
+let dropupTerminal: Terminal | null = null;
+let dropupFitAddon: FitAddon | null = null;
+let dropupBackendId: string | null = null;
+let dropupVisible = false;
+
+function toggleDropup(sdk: CaidoSDK): void {
+  if (!dropupPanel) {
+    createDropupPanel(sdk);
+  }
+
+  dropupVisible = !dropupVisible;
+  dropupPanel!.classList.toggle("ss-dropup--visible", dropupVisible);
+
+  if (dropupVisible) {
+    setTimeout(() => {
+      dropupFitAddon?.fit();
+      dropupTerminal?.focus();
+      if (dropupBackendId && dropupTerminal) {
+        sdk.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
+      }
+    }, 200);
+  }
+}
+
+function createDropupPanel(sdk: CaidoSDK): void {
+  dropupPanel = document.createElement("div");
+  dropupPanel.className = "ss-dropup";
+
+  // Header bar
+  const header = document.createElement("div");
+  header.className = "ss-dropup__header";
+  header.innerHTML = `
+    <span class="ss-dropup__title">
+      <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 6l2 1.5-2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><line x1="7" y1="9" x2="10" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      ShadowShell
+    </span>
+    <button class="ss-dropup__close" title="Close (Cmd+J)">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+  `;
+  header.querySelector(".ss-dropup__close")!.addEventListener("click", () => toggleDropup(sdk));
+
+  // Terminal container
+  const termContainer = document.createElement("div");
+  termContainer.className = "ss-dropup__terminal";
+
+  dropupPanel.appendChild(header);
+  dropupPanel.appendChild(termContainer);
+  document.body.appendChild(dropupPanel);
+
+  // Create terminal
+  dropupTerminal = new Terminal({
+    fontSize,
+    fontFamily:
+      "'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'CaskaydiaCove Nerd Font', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', 'Symbols Nerd Font Mono', monospace",
+    theme: getTheme(),
+    cursorBlink: true,
+    cursorStyle: "bar",
+    scrollback: 5000,
+    allowTransparency: true,
+  });
+
+  dropupFitAddon = new FitAddon();
+  dropupTerminal.loadAddon(dropupFitAddon);
+  dropupTerminal.open(termContainer);
+
+  // Create backend session
+  sdk.backend.createTerminal("", "", "Shell").then((id) => {
+    dropupBackendId = id;
+  }).catch(() => {
+    dropupTerminal?.writeln("\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m");
+  });
+
+  dropupTerminal.onData((data) => {
+    if (dropupBackendId) {
+      sdk.backend.writeTerminal(dropupBackendId, data);
+    }
+  });
+
+  // Listen for output on this session
+  sdk.backend.onEvent("terminalOutput", (event) => {
+    if (event.terminalId === dropupBackendId && dropupTerminal) {
+      dropupTerminal.write(event.data);
+    }
+  });
+
+  sdk.backend.onEvent("terminalExit", (event) => {
+    if (event.terminalId === dropupBackendId && dropupTerminal) {
+      dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
+      dropupBackendId = null;
+    }
+  });
+
+  // Resize observer
+  const ro = new ResizeObserver(() => {
+    if (dropupVisible && dropupFitAddon) {
+      dropupFitAddon.fit();
+      if (dropupBackendId && dropupTerminal) {
+        sdk.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
+      }
+    }
+  });
+  ro.observe(termContainer);
+}
+
 // --- Init ---
 
 export const init = (sdk: CaidoSDK) => {
@@ -895,12 +1004,14 @@ export const init = (sdk: CaidoSDK) => {
 
   sdk.commands.register(Commands.newTab, { name: "ShadowShell: New Tab", run: () => createTab(sdk) });
   sdk.commands.register(Commands.closeTab, { name: "ShadowShell: Close Tab", run: () => { if (activeTabId) closeTab(sdk, activeTabId); } });
-  sdk.commands.register(Commands.togglePanel, { name: "ShadowShell: Toggle", run: () => sdk.navigation.goTo(PAGE_PATH) });
+  sdk.commands.register(Commands.togglePanel, { name: "ShadowShell: Open Full Page", run: () => sdk.navigation.goTo(PAGE_PATH) });
+  sdk.commands.register(Commands.toggleDropup, { name: "ShadowShell: Quick Terminal", run: () => toggleDropup(sdk) });
   sdk.commands.register(Commands.splitVertical, { name: "ShadowShell: Split Right", run: () => splitPane(sdk, "horizontal") });
   sdk.commands.register(Commands.splitHorizontal, { name: "ShadowShell: Split Down", run: () => splitPane(sdk, "vertical") });
   sdk.commands.register(Commands.closePane, { name: "ShadowShell: Close Pane", run: () => closePane(sdk) });
   sdk.commands.register(Commands.search, { name: "ShadowShell: Search", run: toggleSearch });
 
+  sdk.commandPalette.register(Commands.toggleDropup);
   sdk.commandPalette.register(Commands.newTab);
   sdk.commandPalette.register(Commands.closeTab);
   sdk.commandPalette.register(Commands.splitVertical);
@@ -909,7 +1020,7 @@ export const init = (sdk: CaidoSDK) => {
   sdk.commandPalette.register(Commands.search);
 
   // Keyboard shortcuts
-  sdk.shortcuts.register(Commands.togglePanel, ["Cmd", "J"]);
+  sdk.shortcuts.register(Commands.toggleDropup, ["Cmd", "J"]);
 
   setupEvents(sdk);
   setTimeout(() => createTab(sdk), 300);
@@ -927,6 +1038,9 @@ export const init = (sdk: CaidoSDK) => {
         }
       };
       applyToNode(tab.root);
+    }
+    if (dropupTerminal) {
+      dropupTerminal.options.theme = theme;
     }
   });
   observer.observe(document.documentElement, {

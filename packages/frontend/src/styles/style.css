@@ -564,3 +564,75 @@
 .ss-modal__btn--reset:hover {
   background: #f59e0b22;
 }
+
+/* --- Drop-up Quick Terminal --- */
+.ss-dropup {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40vh;
+  min-height: 200px;
+  max-height: 70vh;
+  background: var(--p-surface-950, #09090b);
+  border-top: 1px solid var(--p-surface-700, #3f3f46);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ss-dropup--visible {
+  transform: translateY(0);
+}
+
+.ss-dropup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--p-surface-900, #18181b);
+  border-bottom: 1px solid var(--p-surface-700, #3f3f46);
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.ss-dropup__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--p-text-muted-color, #a1a1aa);
+}
+
+.ss-dropup__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--p-surface-500, #71717a);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.1s;
+}
+
+.ss-dropup__close:hover {
+  background: var(--p-surface-700, #3f3f46);
+  color: var(--p-text-color, #e4e4e7);
+}
+
+.ss-dropup__terminal {
+  flex: 1;
+  overflow: hidden;
+}
+
+.ss-dropup__terminal .xterm {
+  height: 100%;
+}
