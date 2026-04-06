@@ -27,6 +27,10 @@ All built-in presets can be customized (command, name, description), and you can
 
 ![Add new preset](./resources/2.webp)
 
+## Requirements
+
+- **Python 3** — The backend uses a Python PTY relay to manage terminal sessions. Python 3 must be available at `/usr/bin/python3`.
+
 ## Installation
 
 Install from the Caido plugin store, or build from source:
