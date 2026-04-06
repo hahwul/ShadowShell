@@ -4,6 +4,8 @@ Multi-terminal plugin for [Caido](https://caido.io). Press `Cmd+J` to summon a q
 
 ![ShadowShell](./resources/1.webp)
 
+![Quick access](./resources/3.webp)
+
 ## Important Note
 
 This plugin is a **temporary solution** created to provide terminal functionality within Caido until native terminal support is officially implemented (see [caido/caido#1381](https://github.com/caido/caido/issues/1381)). Once Caido adds a built-in terminal, this plugin will likely become redundant. In the meantime, feel free to use ShadowShell to enhance your workflow!
@@ -18,8 +20,6 @@ This plugin is a **temporary solution** created to provide terminal functionalit
 - **Search** - Built-in terminal search via xterm.js SearchAddon
 - **Resize** - Terminals auto-fit to pane size with proper PTY resize signals
 - **Quick access** - Press `Cmd+J` to instantly open the terminal from anywhere in Caido
-
-![Quick access](./resources/3.webp)
 
 ## Built-in Presets
 
