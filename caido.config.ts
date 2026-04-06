@@ -28,6 +28,7 @@ export default defineConfig({
       },
       vite: {
         build: {
+          assetsInlineLimit: 0,
           rollupOptions: {
             external: ["@caido/frontend-sdk"],
           },

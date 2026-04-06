@@ -137,7 +137,7 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string):
   const terminal = new Terminal({
     fontSize,
     fontFamily:
-      "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+      "'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'CaskaydiaCove Nerd Font', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, 'Courier New', 'Symbols Nerd Font Mono', monospace",
     theme: getTheme(),
     cursorBlink: true,
     cursorStyle: "bar",
