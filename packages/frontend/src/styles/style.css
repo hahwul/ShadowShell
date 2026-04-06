@@ -437,6 +437,35 @@
   padding: 3px 6px;
 }
 
+/* --- Settings Button --- */
+.ss-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--p-text-muted-color, #a1a1aa);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.ss-settings-btn:hover {
+  color: var(--p-text-color, #e4e4e7);
+  background: var(--p-surface-700, #3f3f46);
+}
+
+.ss-modal__hint {
+  font-size: 11px;
+  color: var(--p-text-muted-color, #a1a1aa);
+  padding: 0 4px;
+  margin-top: -4px;
+}
+
 /* --- Modal --- */
 .ss-modal-overlay {
   position: fixed;

@@ -754,8 +754,15 @@ function buildUI(sdk: CaidoSDK): HTMLDivElement {
   presetBar = document.createElement("div");
   presetBar.className = "ss-preset-bar";
 
+  const settingsBtn = document.createElement("button");
+  settingsBtn.className = "ss-settings-btn";
+  settingsBtn.title = "Settings";
+  settingsBtn.innerHTML = ICONS.gear;
+  settingsBtn.addEventListener("click", () => showSettingsModal(sdk));
+
   header.appendChild(logo);
   header.appendChild(presetBar);
+  header.appendChild(settingsBtn);
 
   tabBar = document.createElement("div");
   tabBar.className = "ss-tab-bar";
@@ -876,6 +883,70 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
       if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom }); }
       else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color") }); }
       closeModal(); renderPresetBar(sdk);
+    }
+  });
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
+  document.addEventListener("keydown", onKey);
+}
+
+// --- Settings Modal ---
+
+async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
+  document.querySelector(".ss-modal-overlay")?.remove();
+
+  let currentPythonPath = "";
+  try {
+    currentPythonPath = await sdk.backend.getPythonPath();
+  } catch { /* ignore */ }
+
+  const overlay = document.createElement("div");
+  overlay.className = "ss-modal-overlay";
+  const modal = document.createElement("div");
+  modal.className = "ss-modal";
+
+  modal.innerHTML = `
+    <div class="ss-modal__header">Settings</div>
+    <div class="ss-modal__body">
+      <label class="ss-modal__field">
+        <span>Python 3 Path</span>
+        <input type="text" class="ss-modal__input" data-field="pythonPath" value="${escapeAttr(currentPythonPath)}" placeholder="/usr/bin/python3" />
+      </label>
+      <div class="ss-modal__hint">Leave empty to auto-detect. Requires a valid path to Python 3.</div>
+    </div>
+    <div class="ss-modal__footer">
+      <div class="ss-modal__spacer"></div>
+      <button class="ss-modal__btn" data-action="cancel">Cancel</button>
+      <button class="ss-modal__btn ss-modal__btn--primary" data-action="save">Save</button>
+    </div>`;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const firstInput = modal.querySelector("input") as HTMLInputElement;
+  firstInput?.focus(); firstInput?.select();
+
+  const closeModal = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  modal.addEventListener("click", async (e) => {
+    const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
+    if (!action) return;
+    if (action === "cancel") { closeModal(); return; }
+    if (action === "save") {
+      const pythonPath = (modal.querySelector("[data-field=pythonPath]") as HTMLInputElement).value.trim();
+      try {
+        const ok = await sdk.backend.setPythonPath(pythonPath);
+        if (!ok) {
+          const input = modal.querySelector("[data-field=pythonPath]") as HTMLInputElement;
+          input.style.borderColor = "#ef4444";
+          input.focus();
+          return;
+        }
+      } catch {
+        return;
+      }
+      closeModal();
     }
   });
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };

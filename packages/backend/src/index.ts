@@ -205,9 +205,27 @@ let relayScriptPath: string | null = null;
 let nextPort = 18500;
 const MAX_PORT = 32767;
 let pythonPath: string | null = null;
+const SETTINGS_FILE = join(tmpdir(), "shadowshell", "settings.json");
+
+function loadSettings(): { pythonPath?: string } {
+  try {
+    const data = require("fs").readFileSync(SETTINGS_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(settings: Record<string, unknown>): void {
+  const dir = join(tmpdir(), "shadowshell");
+  if (!pathExists(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
 
 function findPython3(): string {
   if (pythonPath) return pythonPath;
+  const saved = loadSettings().pythonPath;
+  if (saved && pathExists(saved)) { pythonPath = saved; return saved; }
   for (const p of ["/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]) {
     if (pathExists(p)) { pythonPath = p; return p; }
   }
@@ -432,6 +450,24 @@ function getShellInfo(sdk: SDK<API, BackendEvents>): {
   };
 }
 
+function setPythonPath(sdk: SDK<API, BackendEvents>, path: string): boolean {
+  if (path && !pathExists(path)) return false;
+  const settings = loadSettings();
+  if (path) {
+    settings.pythonPath = path;
+  } else {
+    delete settings.pythonPath;
+  }
+  saveSettings(settings);
+  pythonPath = path || null;
+  sdk.console.log(`Python path set to: ${path || "(auto-detect)"}`);
+  return true;
+}
+
+function getPythonPath(sdk: SDK<API, BackendEvents>): string {
+  return findPython3();
+}
+
 // --- Type Definitions ---
 
 export type BackendEvents = DefineEvents<{
@@ -447,6 +483,8 @@ export type API = DefineAPI<{
   destroyAllTerminals: typeof destroyAllTerminals;
   listTerminals: typeof listTerminals;
   getShellInfo: typeof getShellInfo;
+  setPythonPath: typeof setPythonPath;
+  getPythonPath: typeof getPythonPath;
 }>;
 
 // --- Init ---
@@ -459,6 +497,8 @@ export function init(sdk: SDK<API, BackendEvents>) {
   sdk.api.register("destroyAllTerminals", destroyAllTerminals);
   sdk.api.register("listTerminals", listTerminals);
   sdk.api.register("getShellInfo", getShellInfo);
+  sdk.api.register("setPythonPath", setPythonPath);
+  sdk.api.register("getPythonPath", getPythonPath);
 
   sdk.console.log("ShadowShell backend initialized");
 }
