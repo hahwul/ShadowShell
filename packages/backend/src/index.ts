@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, execSync, type ChildProcess } from "child_process";
 import { homedir, platform, tmpdir } from "os";
 import { writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
@@ -203,9 +203,29 @@ const terminals = new Map<string, TerminalSession>();
 let terminalCounter = 0;
 let relayScriptPath: string | null = null;
 let nextPort = 18500;
+const MAX_PORT = 32767;
+let pythonPath: string | null = null;
+
+function findPython3(): string {
+  if (pythonPath) return pythonPath;
+  try {
+    pythonPath = execSync("which python3", { encoding: "utf-8" }).trim();
+    return pythonPath;
+  } catch { /* */ }
+  for (const p of ["/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]) {
+    if (pathExists(p)) { pythonPath = p; return p; }
+  }
+  throw new Error("Python 3 not found");
+}
 
 function getDefaultShell(): string {
-  return platform() === "win32" ? "powershell.exe" : "/bin/zsh";
+  if (platform() === "win32") return "powershell.exe";
+  const envShell = process.env["SHELL"];
+  if (envShell && pathExists(envShell)) return envShell;
+  for (const s of ["/bin/zsh", "/bin/bash", "/bin/sh"]) {
+    if (pathExists(s)) return s;
+  }
+  return "/bin/sh";
 }
 
 function generateId(): string {
@@ -258,10 +278,11 @@ function createTerminal(
   const shell = getDefaultShell();
   const home = homedir() || "/";
   const workingDir = cwd || home;
+  if (nextPort > MAX_PORT) nextPort = 18500;
   const port = nextPort++;
   const scriptPath = ensureRelayScript();
 
-  const proc = spawn("/usr/bin/python3", [scriptPath, String(port), shell, workingDir]);
+  const proc = spawn(findPython3(), [scriptPath, String(port), shell, workingDir]);
 
   const session: TerminalSession = {
     id,
@@ -275,10 +296,11 @@ function createTerminal(
 
   terminals.set(id, session);
 
+  let stdoutBuf = "";
   if (proc.stdout) {
     proc.stdout.on("data", (data: Buffer) => {
-      const text = data.toString();
-      if (text.includes("READY:")) {
+      stdoutBuf += data.toString();
+      if (stdoutBuf.includes("READY:")) {
         if (session.isTerminating) return;
 
         // Relay is ready, connect via TCP

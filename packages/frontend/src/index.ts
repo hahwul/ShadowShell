@@ -540,13 +540,23 @@ function doSearch(direction: "next" | "prev"): void {
 function changeFontSize(delta: number): void {
   fontSize = Math.max(8, Math.min(24, fontSize + delta));
   const tab = tabs.find((t) => t.id === activeTabId);
-  if (!tab) return;
-  for (const pane of getAllPanes(tab.root)) {
-    pane.terminal.options.fontSize = fontSize;
+  if (tab) {
+    for (const pane of getAllPanes(tab.root)) {
+      pane.terminal.options.fontSize = fontSize;
+      try {
+        pane.fitAddon.fit();
+        if (pane.backendId) {
+          sdkRef.backend.resizeTerminal(pane.backendId, pane.terminal.cols, pane.terminal.rows);
+        }
+      } catch { /* */ }
+    }
+  }
+  if (dropupTerminal) {
+    dropupTerminal.options.fontSize = fontSize;
     try {
-      pane.fitAddon.fit();
-      if (pane.backendId) {
-        sdkRef.backend.resizeTerminal(pane.backendId, pane.terminal.cols, pane.terminal.rows);
+      dropupFitAddon?.fit();
+      if (dropupBackendId) {
+        sdkRef.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
       }
     } catch { /* */ }
   }
@@ -564,7 +574,7 @@ function renderTabBar(sdk: CaidoSDK): void {
     tabEl.className = `ss-tab ${tab.id === activeTabId ? "ss-tab--active" : ""}`;
 
     const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
-    const icon = preset?.icon || `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const icon = sanitizeSvgIcon(preset?.icon || `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
 
     tabEl.innerHTML = `
       <span class="ss-tab__icon">${icon}</span>
@@ -613,7 +623,7 @@ function updateStatusBar(sdk: CaidoSDK): void {
       <span class="ss-status__label">Tab:</span>
       <span class="ss-status__value">${escapeHtml(tab.name)}</span>
     </span>
-    ${preset ? `<span class="ss-status__item"><span class="ss-status__label">Preset:</span><span class="ss-status__value" style="color:${preset.color}">${escapeHtml(preset.name)}</span></span>` : ""}
+    ${preset ? `<span class="ss-status__item"><span class="ss-status__label">Preset:</span><span class="ss-status__value" style="color:${sanitizeColor(preset.color)}">${escapeHtml(preset.name)}</span></span>` : ""}
     <span class="ss-status__item">
       <span class="ss-status__label">Panes:</span>
       <span class="ss-status__value">${paneCount}</span>
@@ -631,8 +641,8 @@ function renderPresetBar(sdk: CaidoSDK): void {
     const btn = document.createElement("button");
     btn.className = "ss-preset-btn";
     btn.title = `${preset.description}\nCommand: ${preset.command || "(default shell)"}\nRight-click to edit`;
-    btn.innerHTML = `<span class="ss-preset-btn__icon">${preset.icon}</span><span class="ss-preset-btn__name">${escapeHtml(preset.name)}</span>`;
-    btn.style.setProperty("--preset-color", preset.color);
+    btn.innerHTML = `<span class="ss-preset-btn__icon">${sanitizeSvgIcon(preset.icon)}</span><span class="ss-preset-btn__name">${escapeHtml(preset.name)}</span>`;
+    btn.style.setProperty("--preset-color", sanitizeColor(preset.color));
     btn.addEventListener("click", () => createTab(sdk, undefined, preset));
     btn.addEventListener("contextmenu", (e) => { e.preventDefault(); showPresetEditor(sdk, preset); });
     presetBar.appendChild(btn);
@@ -881,7 +891,23 @@ function escapeHtml(str: string): string {
 }
 
 function escapeAttr(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function sanitizeColor(color: string): string {
+  return /^#[0-9a-f]{3,8}$/i.test(color) ? color : "#6b7280";
+}
+
+function sanitizeSvgIcon(icon: string): string {
+  if (!icon || typeof icon !== "string") return ICONS.custom;
+  // Only allow SVG tags, reject anything with event handlers or scripts
+  if (/on\w+\s*=/i.test(icon) || /<script/i.test(icon) || /javascript:/i.test(icon)) {
+    return ICONS.custom;
+  }
+  const div = document.createElement("div");
+  div.innerHTML = icon;
+  if (!div.querySelector("svg")) return ICONS.custom;
+  return icon;
 }
 
 // --- Drop-up Terminal Panel ---
@@ -891,6 +917,7 @@ let dropupTerminal: Terminal | null = null;
 let dropupFitAddon: FitAddon | null = null;
 let dropupBackendId: string | null = null;
 let dropupVisible = false;
+let dropupEventsRegistered = false;
 
 function toggleDropup(sdk: CaidoSDK): void {
   if (!dropupPanel) {
@@ -966,19 +993,22 @@ function createDropupPanel(sdk: CaidoSDK): void {
     }
   });
 
-  // Listen for output on this session
-  sdk.backend.onEvent("terminalOutput", (event) => {
-    if (event.terminalId === dropupBackendId && dropupTerminal) {
-      dropupTerminal.write(event.data);
-    }
-  });
+  // Register backend events only once
+  if (!dropupEventsRegistered) {
+    sdk.backend.onEvent("terminalOutput", (event) => {
+      if (event.terminalId === dropupBackendId && dropupTerminal) {
+        dropupTerminal.write(event.data);
+      }
+    });
 
-  sdk.backend.onEvent("terminalExit", (event) => {
-    if (event.terminalId === dropupBackendId && dropupTerminal) {
-      dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
-      dropupBackendId = null;
-    }
-  });
+    sdk.backend.onEvent("terminalExit", (event) => {
+      if (event.terminalId === dropupBackendId && dropupTerminal) {
+        dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
+        dropupBackendId = null;
+      }
+    });
+    dropupEventsRegistered = true;
+  }
 
   // Resize observer
   const ro = new ResizeObserver(() => {
