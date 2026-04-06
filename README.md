@@ -47,6 +47,12 @@ pnpm install
 pnpm build
 ```
 
+## Disclosures
+
+- **Python 3 subprocess**: The backend spawns a Python 3 process (`/usr/bin/python3`) per terminal session to create and manage PTY (pseudo-terminal) pairs. No external network calls are made by these processes.
+- **Local TCP communication**: Each terminal session uses a localhost TCP port (range 18500–32767) for internal communication between the Node.js backend and the Python PTY relay. All traffic is local-only and never leaves the machine.
+- **No telemetry or external services**: This plugin does not collect any data, send telemetry, or connect to external servers.
+
 ## Architecture
 
 ```
