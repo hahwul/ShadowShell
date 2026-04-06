@@ -940,6 +940,9 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
         if (!ok) {
           const input = modal.querySelector("[data-field=pythonPath]") as HTMLInputElement;
           input.style.borderColor = "#ef4444";
+          const hint = modal.querySelector(".ss-modal__hint") as HTMLDivElement;
+          hint.textContent = "Path not found. Please enter a valid Python 3 binary path.";
+          hint.classList.add("ss-modal__hint--error");
           input.focus();
           return;
         }

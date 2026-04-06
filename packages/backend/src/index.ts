@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "child_process";
 import { homedir, platform, tmpdir } from "os";
-import { writeFileSync, mkdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import { connect, type Socket } from "net";
 import { SDK, DefineAPI, DefineEvents } from "caido:plugin";
@@ -205,11 +205,12 @@ let relayScriptPath: string | null = null;
 let nextPort = 18500;
 const MAX_PORT = 32767;
 let pythonPath: string | null = null;
-const SETTINGS_FILE = join(tmpdir(), "shadowshell", "settings.json");
+const SETTINGS_DIR = join(homedir() || "/", ".config", "shadowshell");
+const SETTINGS_FILE = join(SETTINGS_DIR, "settings.json");
 
 function loadSettings(): { pythonPath?: string } {
   try {
-    const data = require("fs").readFileSync(SETTINGS_FILE, "utf-8");
+    const data = readFileSync(SETTINGS_FILE, "utf-8");
     return JSON.parse(data);
   } catch {
     return {};
@@ -217,8 +218,7 @@ function loadSettings(): { pythonPath?: string } {
 }
 
 function saveSettings(settings: Record<string, unknown>): void {
-  const dir = join(tmpdir(), "shadowshell");
-  if (!pathExists(dir)) mkdirSync(dir, { recursive: true });
+  if (!pathExists(SETTINGS_DIR)) mkdirSync(SETTINGS_DIR, { recursive: true });
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 

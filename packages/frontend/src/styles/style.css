@@ -466,6 +466,10 @@
   margin-top: -4px;
 }
 
+.ss-modal__hint--error {
+  color: #ef4444;
+}
+
 /* --- Modal --- */
 .ss-modal-overlay {
   position: fixed;
