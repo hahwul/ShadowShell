@@ -2,7 +2,15 @@ import type { Caido } from "@caido/sdk-frontend";
 import type { API } from "shadowshell-backend";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { type Preset, getAllPresets } from "./presets";
+import {
+  type Preset,
+  getAllPresets,
+  updatePreset,
+  resetPreset,
+  addCustomPreset,
+  deleteCustomPreset,
+  ICONS,
+} from "./presets";
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles/style.css";
@@ -326,12 +334,155 @@ function renderPresetBar(sdk: CaidoSDK): void {
   for (const preset of getAllPresets()) {
     const btn = document.createElement("button");
     btn.className = "ss-preset-btn";
-    btn.title = preset.description;
+    btn.title = `${preset.description}\nCommand: ${preset.command || "(default shell)"}\nRight-click to edit`;
     btn.innerHTML = `<span class="ss-preset-btn__icon">${preset.icon}</span><span class="ss-preset-btn__name">${escapeHtml(preset.name)}</span>`;
     btn.style.setProperty("--preset-color", preset.color);
     btn.addEventListener("click", () => createTab(sdk, undefined, preset));
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showPresetEditor(sdk, preset);
+    });
     presetBar.appendChild(btn);
   }
+
+  // Add preset button
+  const addBtn = document.createElement("button");
+  addBtn.className = "ss-preset-btn ss-preset-btn--add";
+  addBtn.title = "Add custom preset";
+  addBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+  addBtn.addEventListener("click", () => showPresetEditor(sdk, null));
+  presetBar.appendChild(addBtn);
+}
+
+// --- Preset Editor Modal ---
+
+function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
+  const isNew = !preset;
+  const isBuiltin = preset?.builtin ?? false;
+
+  // Remove existing modal if any
+  document.querySelector(".ss-modal-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "ss-modal-overlay";
+
+  const modal = document.createElement("div");
+  modal.className = "ss-modal";
+
+  const title = isNew ? "New Preset" : `Edit: ${preset!.name}`;
+
+  modal.innerHTML = `
+    <div class="ss-modal__header">${escapeHtml(title)}</div>
+    <div class="ss-modal__body">
+      <label class="ss-modal__field">
+        <span>Name</span>
+        <input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name || "")}" placeholder="My Preset" />
+      </label>
+      <label class="ss-modal__field">
+        <span>Command</span>
+        <input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command || "")}" placeholder="e.g. claude --dangerously-skip-permissions" />
+      </label>
+      <label class="ss-modal__field">
+        <span>Description</span>
+        <input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description || "")}" placeholder="Short description" />
+      </label>
+      <label class="ss-modal__field">
+        <span>Color</span>
+        <input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${preset?.color || "#6b7280"}" />
+      </label>
+    </div>
+    <div class="ss-modal__footer">
+      ${isBuiltin ? `<button class="ss-modal__btn ss-modal__btn--reset" data-action="reset">Reset to default</button>` : ""}
+      ${!isNew && !isBuiltin ? `<button class="ss-modal__btn ss-modal__btn--delete" data-action="delete">Delete</button>` : ""}
+      <div class="ss-modal__spacer"></div>
+      <button class="ss-modal__btn" data-action="cancel">Cancel</button>
+      <button class="ss-modal__btn ss-modal__btn--primary" data-action="save">Save</button>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  // Focus first input
+  const firstInput = modal.querySelector("input") as HTMLInputElement;
+  firstInput?.focus();
+  firstInput?.select();
+
+  // Close on overlay click
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  // Handle buttons
+  modal.addEventListener("click", (e) => {
+    const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
+    if (!action) return;
+
+    if (action === "cancel") {
+      overlay.remove();
+      return;
+    }
+
+    if (action === "reset" && preset) {
+      resetPreset(preset.id);
+      overlay.remove();
+      renderPresetBar(sdk);
+      return;
+    }
+
+    if (action === "delete" && preset) {
+      deleteCustomPreset(preset.id);
+      overlay.remove();
+      renderPresetBar(sdk);
+      return;
+    }
+
+    if (action === "save") {
+      const getName = () => (modal.querySelector("[data-field=name]") as HTMLInputElement).value.trim();
+      const getCommand = () => (modal.querySelector("[data-field=command]") as HTMLInputElement).value.trim();
+      const getDesc = () => (modal.querySelector("[data-field=description]") as HTMLInputElement).value.trim();
+      const getColor = () => (modal.querySelector("[data-field=color]") as HTMLInputElement).value;
+
+      const name = getName();
+      if (!name) {
+        (modal.querySelector("[data-field=name]") as HTMLInputElement).focus();
+        return;
+      }
+
+      if (isNew) {
+        addCustomPreset({
+          name,
+          command: getCommand(),
+          description: getDesc(),
+          color: getColor(),
+          icon: ICONS.custom,
+        });
+      } else {
+        updatePreset(preset!.id, {
+          name,
+          command: getCommand(),
+          description: getDesc(),
+          color: getColor(),
+        });
+      }
+
+      overlay.remove();
+      renderPresetBar(sdk);
+    }
+  });
+
+  // ESC to close
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+function escapeAttr(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 function buildUI(sdk: CaidoSDK): HTMLDivElement {
