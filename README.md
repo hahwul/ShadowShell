@@ -2,9 +2,9 @@
 
 Multi-terminal plugin for [Caido](https://caido.io). Press `Cmd+J` to summon a quick terminal from the shadow — anywhere in Caido, instantly. Open the ShadowShell tab for the full experience: multi-tab terminals, split panes, and AI presets for Claude, Gemini, Codex and more.
 
-![ShadowShell](./resources/1.webp)
-
-![Quick access](./resources/3.webp)
+| ShadowShell | Quick access |
+|:-----------:|:------------:|
+| ![ShadowShell](./resources/1.webp) | ![Quick access](./resources/3.webp) |
 
 ## Important Note
 
