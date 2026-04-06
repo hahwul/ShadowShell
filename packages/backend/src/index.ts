@@ -1,4 +1,4 @@
-import { spawn, execSync, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import { homedir, platform, tmpdir } from "os";
 import { writeFileSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
@@ -208,20 +208,14 @@ let pythonPath: string | null = null;
 
 function findPython3(): string {
   if (pythonPath) return pythonPath;
-  try {
-    pythonPath = execSync("which python3", { encoding: "utf-8" }).trim();
-    return pythonPath;
-  } catch { /* */ }
   for (const p of ["/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]) {
     if (pathExists(p)) { pythonPath = p; return p; }
   }
-  throw new Error("Python 3 not found");
+  return "/usr/bin/python3";
 }
 
 function getDefaultShell(): string {
   if (platform() === "win32") return "powershell.exe";
-  const envShell = process.env["SHELL"];
-  if (envShell && pathExists(envShell)) return envShell;
   for (const s of ["/bin/zsh", "/bin/bash", "/bin/sh"]) {
     if (pathExists(s)) return s;
   }
