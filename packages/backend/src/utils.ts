@@ -11,6 +11,14 @@ export function pathExists(p: string): boolean {
   }
 }
 
+export function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function loadSettings(settingsFile: string): { pythonPath?: string; defaultDirectory?: string } {
   try {
     const data = readFileSync(settingsFile, "utf-8");

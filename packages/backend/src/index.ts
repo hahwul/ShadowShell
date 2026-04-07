@@ -6,6 +6,7 @@ import { connect, type Socket } from "net";
 import { SDK, DefineAPI, DefineEvents } from "caido:plugin";
 import {
   pathExists,
+  isDirectory,
   loadSettings as _loadSettings,
   saveSettings as _saveSettings,
   findPython3 as _findPython3,
@@ -437,7 +438,7 @@ function getPythonPath(sdk: SDK<API, BackendEvents>): string {
 }
 
 function setDefaultDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
-  if (path && !pathExists(path)) return false;
+  if (path && !isDirectory(path)) return false;
   const settings = loadSettings();
   if (path) {
     settings.defaultDirectory = path;
@@ -452,6 +453,11 @@ function setDefaultDirectory(sdk: SDK<API, BackendEvents>, path: string): boolea
 function getDefaultDirectory(sdk: SDK<API, BackendEvents>): string {
   const settings = loadSettings();
   return settings.defaultDirectory || "";
+}
+
+function validateDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
+  if (!path) return true;
+  return isDirectory(path);
 }
 
 // --- Type Definitions ---
@@ -473,6 +479,7 @@ export type API = DefineAPI<{
   getPythonPath: typeof getPythonPath;
   setDefaultDirectory: typeof setDefaultDirectory;
   getDefaultDirectory: typeof getDefaultDirectory;
+  validateDirectory: typeof validateDirectory;
 }>;
 
 // --- Init ---
@@ -489,6 +496,7 @@ export function init(sdk: SDK<API, BackendEvents>) {
   sdk.api.register("getPythonPath", getPythonPath);
   sdk.api.register("setDefaultDirectory", setDefaultDirectory);
   sdk.api.register("getDefaultDirectory", getDefaultDirectory);
+  sdk.api.register("validateDirectory", validateDirectory);
 
   sdk.console.log("ShadowShell backend initialized");
 }

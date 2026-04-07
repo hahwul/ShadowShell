@@ -125,6 +125,11 @@ let searchBar: HTMLDivElement;
 
 // --- Pane Helpers ---
 
+async function resolveWorkingDirectory(sdk: CaidoSDK, preset?: Preset | null): Promise<string> {
+  if (preset?.defaultDirectory) return preset.defaultDirectory;
+  try { return await sdk.backend.getDefaultDirectory(); } catch { return ""; }
+}
+
 function generatePaneId(): string {
   return `pane-${++paneCounter}`;
 }
@@ -298,12 +303,8 @@ async function splitPane(
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
-  // Resolve working directory from tab's preset or global setting
   const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
-  let cwd = preset?.defaultDirectory || "";
-  if (!cwd) {
-    try { cwd = await sdk.backend.getDefaultDirectory(); } catch { /* ignore */ }
-  }
+  const cwd = await resolveWorkingDirectory(sdk, preset);
 
   let newPane: Pane;
   try {
@@ -438,11 +439,7 @@ async function createTab(sdk: CaidoSDK, name?: string, preset?: Preset): Promise
   container.id = `ss-term-${id}`;
   terminalArea.appendChild(container);
 
-  // Resolve working directory: preset-specific > global setting > home
-  let cwd = preset?.defaultDirectory || "";
-  if (!cwd) {
-    try { cwd = await sdk.backend.getDefaultDirectory(); } catch { /* ignore */ }
-  }
+  const cwd = await resolveWorkingDirectory(sdk, preset);
   const pane = await createPane(sdk, preset?.command, preset?.name, cwd);
   const root: LeafNode = { type: "leaf", pane };
 
@@ -884,7 +881,7 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
     document.removeEventListener("keydown", onKey);
   };
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
-  modal.addEventListener("click", (e) => {
+  modal.addEventListener("click", async (e) => {
     const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
     if (!action) return;
     if (action === "cancel") { closeModal(); return; }
@@ -895,6 +892,17 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
       const name = v("name");
       if (!name) { (modal.querySelector("[data-field=name]") as HTMLInputElement).focus(); return; }
       const defaultDirectory = v("defaultDirectory");
+      if (defaultDirectory) {
+        try {
+          const valid = await sdk.backend.validateDirectory(defaultDirectory);
+          if (!valid) {
+            const input = modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement;
+            input.style.borderColor = "#ef4444";
+            input.focus();
+            return;
+          }
+        } catch { /* ignore */ }
+      }
       if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom, defaultDirectory }); }
       else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color"), defaultDirectory }); }
       closeModal(); renderPresetBar(sdk);
@@ -930,7 +938,7 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
         <span>Default Directory</span>
         <input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(currentDefaultDir)}" placeholder="e.g. /home/user/projects" />
       </label>
-      <div class="ss-modal__hint">Default working directory for new terminals. Leave empty to use home directory. Presets can override this.</div>
+      <div class="ss-modal__hint" data-hint="directory">Default working directory for new terminals. Leave empty to use home directory. Presets can override this.</div>
       <label class="ss-modal__field">
         <span>Python 3 Path</span>
         <input type="text" class="ss-modal__input" data-field="pythonPath" value="${escapeAttr(currentPythonPath)}" placeholder="/usr/bin/python3" />
@@ -968,6 +976,11 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
           if (!dirOk) {
             const input = modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement;
             input.style.borderColor = "#ef4444";
+            const hint = modal.querySelector("[data-hint=directory]") as HTMLDivElement;
+            if (hint) {
+              hint.textContent = "Directory not found. Please enter a valid directory path.";
+              hint.classList.add("ss-modal__hint--error");
+            }
             input.focus();
             return;
           }
@@ -1073,8 +1086,8 @@ function createDropupPanel(sdk: CaidoSDK): void {
   dropupTerminal.open(termContainer);
 
   // Create backend session (use global default directory)
-  sdk.backend.getDefaultDirectory().catch(() => "").then((dir) => {
-    return sdk.backend.createTerminal(dir || "", "", "Shell");
+  resolveWorkingDirectory(sdk).then((dir) => {
+    return sdk.backend.createTerminal(dir, "", "Shell");
   }).then((id) => {
     dropupBackendId = id;
   }).catch(() => {

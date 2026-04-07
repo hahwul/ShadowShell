@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import {
   pathExists,
+  isDirectory,
   loadSettings,
   saveSettings,
   findPython3,
@@ -229,5 +230,63 @@ describe("nextPortInRange", () => {
 
   it("should return current when exactly at max", () => {
     expect(nextPortInRange(32767, 32767, 18500)).toBe(32767);
+  });
+});
+
+describe("isDirectory", () => {
+  it("should return true for existing directory", () => {
+    expect(isDirectory(__dirname)).toBe(true);
+  });
+
+  it("should return false for a file", () => {
+    expect(isDirectory(__filename)).toBe(false);
+  });
+
+  it("should return false for non-existent path", () => {
+    expect(isDirectory("/nonexistent/directory")).toBe(false);
+  });
+
+  it("should return false for empty string", () => {
+    expect(isDirectory("")).toBe(false);
+  });
+});
+
+describe("loadSettings with defaultDirectory", () => {
+  it("should load defaultDirectory from settings file", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ defaultDirectory: "/tmp" }));
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({ defaultDirectory: "/tmp" });
+  });
+
+  it("should load both pythonPath and defaultDirectory", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/usr/bin/python3", defaultDirectory: "/home/user" }));
+    const settings = loadSettings(TEST_SETTINGS_FILE);
+    expect(settings.pythonPath).toBe("/usr/bin/python3");
+    expect(settings.defaultDirectory).toBe("/home/user");
+  });
+
+  it("should return undefined defaultDirectory when not set", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/usr/bin/python3" }));
+    expect(loadSettings(TEST_SETTINGS_FILE).defaultDirectory).toBeUndefined();
+  });
+});
+
+describe("saveSettings with defaultDirectory", () => {
+  it("should persist defaultDirectory", () => {
+    const dir = join(TEST_DIR, "dirsettings");
+    const file = join(dir, "settings.json");
+    saveSettings(dir, file, { defaultDirectory: "/home/user/projects" });
+    expect(loadSettings(file)).toEqual({ defaultDirectory: "/home/user/projects" });
+  });
+
+  it("should persist both fields together", () => {
+    const dir = join(TEST_DIR, "bothsettings");
+    const file = join(dir, "settings.json");
+    saveSettings(dir, file, { pythonPath: "/usr/bin/python3", defaultDirectory: "/tmp" });
+    const result = loadSettings(file);
+    expect(result.pythonPath).toBe("/usr/bin/python3");
+    expect(result.defaultDirectory).toBe("/tmp");
   });
 });
