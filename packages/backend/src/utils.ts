@@ -11,7 +11,7 @@ export function pathExists(p: string): boolean {
   }
 }
 
-export function loadSettings(settingsFile: string): { pythonPath?: string } {
+export function loadSettings(settingsFile: string): { pythonPath?: string; defaultDirectory?: string } {
   try {
     const data = readFileSync(settingsFile, "utf-8");
     return JSON.parse(data);

@@ -129,7 +129,7 @@ function generatePaneId(): string {
   return `pane-${++paneCounter}`;
 }
 
-async function createPane(sdk: CaidoSDK, command?: string, presetName?: string): Promise<Pane> {
+async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, cwd?: string): Promise<Pane> {
   const id = generatePaneId();
 
   const element = document.createElement("div");
@@ -161,7 +161,7 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string):
   let backendId: string | null = null;
   try {
     backendId = await sdk.backend.createTerminal(
-      "",
+      cwd || "",
       command || "",
       presetName || ""
     );
@@ -298,9 +298,16 @@ async function splitPane(
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
+  // Resolve working directory from tab's preset or global setting
+  const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
+  let cwd = preset?.defaultDirectory || "";
+  if (!cwd) {
+    try { cwd = await sdk.backend.getDefaultDirectory(); } catch { /* ignore */ }
+  }
+
   let newPane: Pane;
   try {
-    newPane = await createPane(sdk);
+    newPane = await createPane(sdk, undefined, undefined, cwd);
   } catch {
     return;
   }
@@ -431,7 +438,12 @@ async function createTab(sdk: CaidoSDK, name?: string, preset?: Preset): Promise
   container.id = `ss-term-${id}`;
   terminalArea.appendChild(container);
 
-  const pane = await createPane(sdk, preset?.command, preset?.name);
+  // Resolve working directory: preset-specific > global setting > home
+  let cwd = preset?.defaultDirectory || "";
+  if (!cwd) {
+    try { cwd = await sdk.backend.getDefaultDirectory(); } catch { /* ignore */ }
+  }
+  const pane = await createPane(sdk, preset?.command, preset?.name, cwd);
   const root: LeafNode = { type: "leaf", pane };
 
   container.appendChild(renderPaneTree(root));
@@ -851,6 +863,7 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
       <label class="ss-modal__field"><span>Name</span><input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name || "")}" placeholder="My Preset" /></label>
       <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command || "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
       <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description || "")}" placeholder="Short description" /></label>
+      <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory || "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
       <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${preset?.color || "#6b7280"}" /></label>
     </div>
     <div class="ss-modal__footer">
@@ -881,8 +894,9 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
       const v = (f: string) => (modal.querySelector(`[data-field=${f}]`) as HTMLInputElement).value.trim();
       const name = v("name");
       if (!name) { (modal.querySelector("[data-field=name]") as HTMLInputElement).focus(); return; }
-      if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom }); }
-      else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color") }); }
+      const defaultDirectory = v("defaultDirectory");
+      if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom, defaultDirectory }); }
+      else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color"), defaultDirectory }); }
       closeModal(); renderPresetBar(sdk);
     }
   });
@@ -896,8 +910,12 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   document.querySelector(".ss-modal-overlay")?.remove();
 
   let currentPythonPath = "";
+  let currentDefaultDir = "";
   try {
     currentPythonPath = await sdk.backend.getPythonPath();
+  } catch { /* ignore */ }
+  try {
+    currentDefaultDir = await sdk.backend.getDefaultDirectory();
   } catch { /* ignore */ }
 
   const overlay = document.createElement("div");
@@ -909,10 +927,15 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
     <div class="ss-modal__header">Settings</div>
     <div class="ss-modal__body">
       <label class="ss-modal__field">
+        <span>Default Directory</span>
+        <input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(currentDefaultDir)}" placeholder="e.g. /home/user/projects" />
+      </label>
+      <div class="ss-modal__hint">Default working directory for new terminals. Leave empty to use home directory. Presets can override this.</div>
+      <label class="ss-modal__field">
         <span>Python 3 Path</span>
         <input type="text" class="ss-modal__input" data-field="pythonPath" value="${escapeAttr(currentPythonPath)}" placeholder="/usr/bin/python3" />
       </label>
-      <div class="ss-modal__hint">Leave empty to auto-detect. Requires a valid path to Python 3.</div>
+      <div class="ss-modal__hint" data-hint="python">Leave empty to auto-detect. Requires a valid path to Python 3.</div>
     </div>
     <div class="ss-modal__footer">
       <div class="ss-modal__spacer"></div>
@@ -935,15 +958,37 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
     if (!action) return;
     if (action === "cancel") { closeModal(); return; }
     if (action === "save") {
+      const defaultDirectory = (modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement).value.trim();
       const pythonPath = (modal.querySelector("[data-field=pythonPath]") as HTMLInputElement).value.trim();
+
+      // Validate and save default directory
+      if (defaultDirectory) {
+        try {
+          const dirOk = await sdk.backend.setDefaultDirectory(defaultDirectory);
+          if (!dirOk) {
+            const input = modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement;
+            input.style.borderColor = "#ef4444";
+            input.focus();
+            return;
+          }
+        } catch {
+          return;
+        }
+      } else {
+        try { await sdk.backend.setDefaultDirectory(""); } catch { /* ignore */ }
+      }
+
+      // Validate and save python path
       try {
         const ok = await sdk.backend.setPythonPath(pythonPath);
         if (!ok) {
           const input = modal.querySelector("[data-field=pythonPath]") as HTMLInputElement;
           input.style.borderColor = "#ef4444";
-          const hint = modal.querySelector(".ss-modal__hint") as HTMLDivElement;
-          hint.textContent = "Path not found. Please enter a valid Python 3 binary path.";
-          hint.classList.add("ss-modal__hint--error");
+          const hint = modal.querySelector("[data-hint=python]") as HTMLDivElement;
+          if (hint) {
+            hint.textContent = "Path not found. Please enter a valid Python 3 binary path.";
+            hint.classList.add("ss-modal__hint--error");
+          }
           input.focus();
           return;
         }
@@ -1027,8 +1072,10 @@ function createDropupPanel(sdk: CaidoSDK): void {
   dropupTerminal.loadAddon(dropupFitAddon);
   dropupTerminal.open(termContainer);
 
-  // Create backend session
-  sdk.backend.createTerminal("", "", "Shell").then((id) => {
+  // Create backend session (use global default directory)
+  sdk.backend.getDefaultDirectory().catch(() => "").then((dir) => {
+    return sdk.backend.createTerminal(dir || "", "", "Shell");
+  }).then((id) => {
     dropupBackendId = id;
   }).catch(() => {
     dropupTerminal?.writeln("\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m");
