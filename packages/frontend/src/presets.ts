@@ -5,6 +5,7 @@ export interface Preset {
   command: string;
   description: string;
   color: string;
+  defaultDirectory?: string;
   builtin?: boolean;
 }
 

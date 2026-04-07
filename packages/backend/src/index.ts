@@ -6,6 +6,7 @@ import { connect, type Socket } from "net";
 import { SDK, DefineAPI, DefineEvents } from "caido:plugin";
 import {
   pathExists,
+  isDirectory,
   loadSettings as _loadSettings,
   saveSettings as _saveSettings,
   findPython3 as _findPython3,
@@ -216,7 +217,7 @@ let pythonPath: string | null = null;
 const SETTINGS_DIR = join(homedir() || "/", ".config", "shadowshell");
 const SETTINGS_FILE = join(SETTINGS_DIR, "settings.json");
 
-function loadSettings(): { pythonPath?: string } {
+function loadSettings(): { pythonPath?: string; defaultDirectory?: string } {
   return _loadSettings(SETTINGS_FILE);
 }
 
@@ -436,6 +437,29 @@ function getPythonPath(sdk: SDK<API, BackendEvents>): string {
   return findPython3Local();
 }
 
+function setDefaultDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
+  if (path && !isDirectory(path)) return false;
+  const settings = loadSettings();
+  if (path) {
+    settings.defaultDirectory = path;
+  } else {
+    delete settings.defaultDirectory;
+  }
+  saveSettings(settings);
+  sdk.console.log(`Default directory set to: ${path || "(home)"}`);
+  return true;
+}
+
+function getDefaultDirectory(sdk: SDK<API, BackendEvents>): string {
+  const settings = loadSettings();
+  return settings.defaultDirectory || "";
+}
+
+function validateDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
+  if (!path) return true;
+  return isDirectory(path);
+}
+
 // --- Type Definitions ---
 
 export type BackendEvents = DefineEvents<{
@@ -453,6 +477,9 @@ export type API = DefineAPI<{
   getShellInfo: typeof getShellInfo;
   setPythonPath: typeof setPythonPath;
   getPythonPath: typeof getPythonPath;
+  setDefaultDirectory: typeof setDefaultDirectory;
+  getDefaultDirectory: typeof getDefaultDirectory;
+  validateDirectory: typeof validateDirectory;
 }>;
 
 // --- Init ---
@@ -467,6 +494,9 @@ export function init(sdk: SDK<API, BackendEvents>) {
   sdk.api.register("getShellInfo", getShellInfo);
   sdk.api.register("setPythonPath", setPythonPath);
   sdk.api.register("getPythonPath", getPythonPath);
+  sdk.api.register("setDefaultDirectory", setDefaultDirectory);
+  sdk.api.register("getDefaultDirectory", getDefaultDirectory);
+  sdk.api.register("validateDirectory", validateDirectory);
 
   sdk.console.log("ShadowShell backend initialized");
 }
