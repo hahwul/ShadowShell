@@ -1,9 +1,17 @@
 import { spawn, type ChildProcess } from "child_process";
 import { homedir, platform, tmpdir } from "os";
-import { readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { connect, type Socket } from "net";
 import { SDK, DefineAPI, DefineEvents } from "caido:plugin";
+import {
+  pathExists,
+  loadSettings as _loadSettings,
+  saveSettings as _saveSettings,
+  findPython3 as _findPython3,
+  getDefaultShell,
+  frameSend,
+} from "./utils";
 
 // --- Embedded Python PTY relay (TCP mode, no WebSocket) ---
 
@@ -209,48 +217,22 @@ const SETTINGS_DIR = join(homedir() || "/", ".config", "shadowshell");
 const SETTINGS_FILE = join(SETTINGS_DIR, "settings.json");
 
 function loadSettings(): { pythonPath?: string } {
-  try {
-    const data = readFileSync(SETTINGS_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return {};
-  }
+  return _loadSettings(SETTINGS_FILE);
 }
 
 function saveSettings(settings: Record<string, unknown>): void {
-  if (!pathExists(SETTINGS_DIR)) mkdirSync(SETTINGS_DIR, { recursive: true });
-  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  _saveSettings(SETTINGS_DIR, SETTINGS_FILE, settings);
 }
 
-function findPython3(): string {
+function findPython3Local(): string {
   if (pythonPath) return pythonPath;
-  const saved = loadSettings().pythonPath;
-  if (saved && pathExists(saved)) { pythonPath = saved; return saved; }
-  for (const p of ["/usr/bin/python3", "/usr/local/bin/python3", "/opt/homebrew/bin/python3"]) {
-    if (pathExists(p)) { pythonPath = p; return p; }
-  }
-  return "/usr/bin/python3";
-}
-
-function getDefaultShell(): string {
-  if (platform() === "win32") return "powershell.exe";
-  for (const s of ["/bin/zsh", "/bin/bash", "/bin/sh"]) {
-    if (pathExists(s)) return s;
-  }
-  return "/bin/sh";
+  const result = _findPython3(null, SETTINGS_FILE);
+  pythonPath = result;
+  return result;
 }
 
 function generateId(): string {
   return `term-${++terminalCounter}-${Date.now()}`;
-}
-
-function pathExists(p: string): boolean {
-  try {
-    statSync(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function ensureRelayScript(): string {
@@ -262,20 +244,6 @@ function ensureRelayScript(): string {
   relayScriptPath = join(dir, "relay.py");
   writeFileSync(relayScriptPath, RELAY_SCRIPT);
   return relayScriptPath;
-}
-
-// --- Framed message helpers (4-byte length prefix) ---
-
-function frameSend(sock: Socket, obj: Record<string, unknown>): boolean {
-  try {
-    const payload = Buffer.from(JSON.stringify(obj), "utf-8");
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(payload.length, 0);
-    sock.write(Buffer.concat([header, payload]));
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // --- API ---
@@ -294,7 +262,7 @@ function createTerminal(
   const port = nextPort++;
   const scriptPath = ensureRelayScript();
 
-  const proc = spawn(findPython3(), [scriptPath, String(port), shell, workingDir]);
+  const proc = spawn(findPython3Local(), [scriptPath, String(port), shell, workingDir]);
 
   const session: TerminalSession = {
     id,
@@ -465,7 +433,7 @@ function setPythonPath(sdk: SDK<API, BackendEvents>, path: string): boolean {
 }
 
 function getPythonPath(sdk: SDK<API, BackendEvents>): string {
-  return findPython3();
+  return findPython3Local();
 }
 
 // --- Type Definitions ---

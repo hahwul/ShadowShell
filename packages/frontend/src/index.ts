@@ -12,6 +12,7 @@ import {
   deleteCustomPreset,
   ICONS,
 } from "./presets";
+import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon } from "./helpers";
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles/style.css";
@@ -954,34 +955,6 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   });
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
   document.addEventListener("keydown", onKey);
-}
-
-// --- Helpers ---
-
-function escapeHtml(str: string): string {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function escapeAttr(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function sanitizeColor(color: string): string {
-  return /^#[0-9a-f]{3,8}$/i.test(color) ? color : "#6b7280";
-}
-
-function sanitizeSvgIcon(icon: string): string {
-  if (!icon || typeof icon !== "string") return ICONS.custom;
-  // Only allow SVG tags, reject anything with event handlers or scripts
-  if (/on\w+\s*=/i.test(icon) || /<script/i.test(icon) || /javascript:/i.test(icon)) {
-    return ICONS.custom;
-  }
-  const div = document.createElement("div");
-  div.innerHTML = icon;
-  if (!div.querySelector("svg")) return ICONS.custom;
-  return icon;
 }
 
 // --- Drop-up Terminal Panel ---
