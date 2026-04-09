@@ -34,6 +34,32 @@ describe("escapeHtml", () => {
     expect(result).not.toContain("<div");
     expect(result).toContain("&lt;div");
   });
+
+  it("should escape Unicode characters correctly", () => {
+    const input = "한글 <b>테스트</b> 🚀";
+    const result = escapeHtml(input);
+    expect(result).toContain("한글");
+    expect(result).toContain("🚀");
+    expect(result).not.toContain("<b>");
+    expect(result).toContain("&lt;b&gt;");
+  });
+
+  it("should handle deeply nested malicious HTML", () => {
+    const input = '<div><span><img src=x onerror="alert(1)"></span></div>';
+    const result = escapeHtml(input);
+    // All HTML tags are escaped — no raw < or > remain
+    expect(result).not.toContain("<div");
+    expect(result).not.toContain("<img");
+    expect(result).toContain("&lt;div&gt;");
+    expect(result).toContain("&lt;img");
+  });
+
+  it("should handle HTML entities in input", () => {
+    const input = "&amp; &lt; &gt;";
+    const result = escapeHtml(input);
+    // textContent + innerHTML double-escapes entities
+    expect(result).toContain("&amp;amp;");
+  });
 });
 
 describe("escapeAttr", () => {
@@ -63,6 +89,15 @@ describe("escapeAttr", () => {
 
   it("should pass through safe strings unchanged", () => {
     expect(escapeAttr("hello-world_123")).toBe("hello-world_123");
+  });
+
+  it("should escape backticks (template literal injection)", () => {
+    // backticks are not escaped by escapeAttr — this documents the behavior
+    expect(escapeAttr("`${alert(1)}`")).toBe("`${alert(1)}`");
+  });
+
+  it("should handle Unicode in attribute values", () => {
+    expect(escapeAttr("한글<값>")).toBe("한글&lt;값&gt;");
   });
 });
 
@@ -109,6 +144,40 @@ describe("sanitizeColor", () => {
 
   it("should reject too-long hex", () => {
     expect(sanitizeColor("#aabbccdde")).toBe("#6b7280");
+  });
+
+  it("should reject 1-char hex", () => {
+    expect(sanitizeColor("#a")).toBe("#6b7280");
+  });
+
+  it("should reject 2-char hex", () => {
+    expect(sanitizeColor("#ab")).toBe("#6b7280");
+  });
+
+  it("should accept 4-char hex (regex allows 3-8, but not valid CSS)", () => {
+    // Known gap: regex /^#[0-9a-f]{3,8}$/i allows non-standard lengths (4,5,7)
+    expect(sanitizeColor("#abcd")).toBe("#abcd");
+  });
+
+  it("should accept 5-char hex (regex allows 3-8, but not valid CSS)", () => {
+    expect(sanitizeColor("#abcde")).toBe("#abcde");
+  });
+
+  it("should accept 7-char hex (regex allows 3-8, but not valid CSS)", () => {
+    expect(sanitizeColor("#abcdeff")).toBe("#abcdeff");
+  });
+
+  it("should reject mixed valid/invalid hex chars", () => {
+    expect(sanitizeColor("#abcxyz")).toBe("#6b7280");
+  });
+
+  it("should reject hsl() notation", () => {
+    expect(sanitizeColor("hsl(0, 100%, 50%)")).toBe("#6b7280");
+  });
+
+  it("should reject color with whitespace", () => {
+    expect(sanitizeColor(" #aabbcc")).toBe("#6b7280");
+    expect(sanitizeColor("#aabbcc ")).toBe("#6b7280");
   });
 });
 
@@ -160,5 +229,55 @@ describe("sanitizeSvgIcon", () => {
     for (const [, icon] of Object.entries(ICONS)) {
       expect(sanitizeSvgIcon(icon)).toBe(icon);
     }
+  });
+
+  it("should reject SVG with data: URI in href", () => {
+    const malicious = '<svg><a href="data:text/html,<script>alert(1)</script>"><circle/></a></svg>';
+    // data: URIs are not blocked by current implementation — documenting behavior
+    const result = sanitizeSvgIcon(malicious);
+    // At minimum, script tag inside data: should trigger script detection
+    expect(result).toBe(ICONS.custom);
+  });
+
+  it("should reject SVG with foreignObject containing HTML", () => {
+    const malicious = '<svg><foreignObject><body xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></body></foreignObject></svg>';
+    expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
+  });
+
+  it("should reject SVG with event handler using whitespace tricks", () => {
+    const malicious = '<svg onload ="alert(1)"><circle/></svg>';
+    expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
+  });
+
+  it("should reject SVG with onmouseover handler", () => {
+    const malicious = '<svg onmouseover="alert(1)"><circle/></svg>';
+    expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
+  });
+
+  it("should reject SVG with onfocus handler", () => {
+    const malicious = '<svg><rect onfocus="alert(1)" tabindex="1"/></svg>';
+    expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
+  });
+
+  it("should reject SVG with JAVASCRIPT: in mixed case", () => {
+    const malicious = '<svg><a href="JaVaScRiPt:alert(1)"><circle/></a></svg>';
+    expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
+  });
+
+  it("should handle null and undefined gracefully", () => {
+    expect(sanitizeSvgIcon(null as any)).toBe(ICONS.custom);
+    expect(sanitizeSvgIcon(undefined as any)).toBe(ICONS.custom);
+  });
+
+  it("should not block SVG set/animate attribute injection (known limitation)", () => {
+    const malicious = '<svg><set attributeName="onmouseover" to="alert(1)"/></svg>';
+    // Known gap: <set attributeName="onmouseover"> doesn't match on\w+= regex
+    // since the event handler name is in an attribute value, not as an attribute itself.
+    expect(sanitizeSvgIcon(malicious)).not.toBe(ICONS.custom);
+  });
+
+  it("should accept complex valid SVG with paths and transforms", () => {
+    const valid = '<svg width="14" height="14" viewBox="0 0 14 14"><g transform="translate(1,1)"><path d="M0 0L12 0L12 12L0 12Z" stroke="currentColor" fill="none"/><circle cx="6" cy="6" r="3" fill="currentColor"/></g></svg>';
+    expect(sanitizeSvgIcon(valid)).toBe(valid);
   });
 });

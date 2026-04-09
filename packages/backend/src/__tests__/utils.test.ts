@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { join } from "path";
-import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import {
   pathExists,
@@ -46,6 +46,24 @@ describe("pathExists", () => {
 
   it("should return false for empty string", () => {
     expect(pathExists("")).toBe(false);
+  });
+
+  it("should handle paths with special characters", () => {
+    expect(pathExists("/nonexistent/path with spaces/file.txt")).toBe(false);
+    expect(pathExists("/nonexistent/경로/파일.txt")).toBe(false);
+  });
+
+  it("should handle symlinks (follows them by default via statSync)", () => {
+    const target = __filename;
+    const link = join(TEST_DIR, "test-symlink");
+    symlinkSync(target, link);
+    expect(pathExists(link)).toBe(true);
+  });
+
+  it("should return false for broken symlinks", () => {
+    const link = join(TEST_DIR, "broken-symlink");
+    symlinkSync("/nonexistent/target", link);
+    expect(pathExists(link)).toBe(false);
   });
 });
 
@@ -118,6 +136,28 @@ describe("findPython3", () => {
     // On macOS, one of the standard paths should exist, or falls back to /usr/bin/python3
     expect(result).toMatch(/python3/);
   });
+
+  it("should skip settings path when it points to non-existent file", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/nonexistent/python3" }));
+    const result = findPython3(null, TEST_SETTINGS_FILE);
+    // Should not return the invalid settings path — falls back to system paths
+    expect(result).not.toBe("/nonexistent/python3");
+    expect(result).toMatch(/python3/);
+  });
+
+  it("should skip settings when pythonPath key is missing", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ otherKey: "value" }));
+    const result = findPython3(null, TEST_SETTINGS_FILE);
+    expect(result).toMatch(/python3/);
+  });
+
+  it("should return cached path even if it does not exist on disk", () => {
+    // cached path is returned as-is without validation
+    const fakePath = "/totally/fake/python3";
+    expect(findPython3(fakePath, TEST_SETTINGS_FILE)).toBe(fakePath);
+  });
 });
 
 describe("getDefaultShell", () => {
@@ -141,6 +181,23 @@ describe("generateId", () => {
     expect(id1).not.toBe(id2);
     expect(id1).toContain("term-1-");
     expect(id2).toContain("term-2-");
+  });
+
+  it("should embed a valid timestamp", () => {
+    const before = Date.now();
+    const id = generateId(99);
+    const after = Date.now();
+    const ts = parseInt(id.split("-")[2]!, 10);
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
+  });
+
+  it("should handle counter value of 0", () => {
+    expect(generateId(0)).toMatch(/^term-0-\d+$/);
+  });
+
+  it("should handle large counter values", () => {
+    expect(generateId(999999)).toMatch(/^term-999999-\d+$/);
   });
 });
 
@@ -215,6 +272,45 @@ describe("frameSend", () => {
     const result = frameSend(mockSocket, {});
     expect(result).toBe(true);
   });
+
+  it("should handle nested objects and arrays", () => {
+    const chunks: Buffer[] = [];
+    const mockSocket = {
+      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+    } as any;
+
+    const payload = { type: "input", data: "test", meta: { nested: [1, 2, 3] } };
+    frameSend(mockSocket, payload);
+    const written = chunks[0]!;
+    const parsed = JSON.parse(written.subarray(4).toString("utf-8"));
+    expect(parsed).toEqual(payload);
+  });
+
+  it("should produce correct header for large payloads", () => {
+    const chunks: Buffer[] = [];
+    const mockSocket = {
+      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+    } as any;
+
+    const largeData = "x".repeat(100000);
+    frameSend(mockSocket, { type: "input", data: largeData });
+    const written = chunks[0]!;
+    const headerLen = written.readUInt32BE(0);
+    const actualPayloadLen = written.length - 4;
+    expect(headerLen).toBe(actualPayloadLen);
+  });
+
+  it("should handle special characters in data", () => {
+    const chunks: Buffer[] = [];
+    const mockSocket = {
+      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+    } as any;
+
+    frameSend(mockSocket, { type: "input", data: "\n\t\r\0\\\"" });
+    const written = chunks[0]!;
+    const parsed = JSON.parse(written.subarray(4).toString("utf-8"));
+    expect(parsed.data).toBe("\n\t\r\0\\\"");
+  });
 });
 
 describe("nextPortInRange", () => {
@@ -230,6 +326,36 @@ describe("nextPortInRange", () => {
 
   it("should return current when exactly at max", () => {
     expect(nextPortInRange(32767, 32767, 18500)).toBe(32767);
+  });
+
+  it("should handle single-port range (min === max)", () => {
+    expect(nextPortInRange(5000, 5000, 5000)).toBe(5000);
+    expect(nextPortInRange(5001, 5000, 5000)).toBe(5000);
+  });
+});
+
+describe("saveSettings + loadSettings round-trip edge cases", () => {
+  it("should handle settings with special characters in values", () => {
+    const dir = join(TEST_DIR, "special");
+    const file = join(dir, "settings.json");
+    const settings = { pythonPath: "/path/with spaces/and-특수문자/python3" };
+    saveSettings(dir, file, settings);
+    expect(loadSettings(file)).toEqual(settings);
+  });
+
+  it("should handle settings with multiple keys", () => {
+    const dir = join(TEST_DIR, "multi");
+    const file = join(dir, "settings.json");
+    const settings = { pythonPath: "/usr/bin/python3", theme: "dark", port: 8080 };
+    saveSettings(dir, file, settings as any);
+    expect(loadSettings(file)).toEqual(settings);
+  });
+
+  it("should handle empty settings object", () => {
+    const dir = join(TEST_DIR, "empty");
+    const file = join(dir, "settings.json");
+    saveSettings(dir, file, {});
+    expect(loadSettings(file)).toEqual({});
   });
 });
 
