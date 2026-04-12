@@ -13,6 +13,15 @@ import {
   ICONS,
 } from "./presets";
 import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon } from "./helpers";
+import {
+  findPaneById,
+  getAllPanes,
+  replaceLeaf,
+  removePaneFromTree,
+  type PaneNode,
+  type LeafNode,
+  type SplitNode,
+} from "./tree";
 
 import "@xterm/xterm/css/xterm.css";
 import "./styles/style.css";
@@ -83,26 +92,10 @@ interface Pane {
   element: HTMLDivElement; // wrapper with border
 }
 
-interface LeafNode {
-  type: "leaf";
-  pane: Pane;
-}
-
-interface SplitNode {
-  type: "split";
-  direction: "horizontal" | "vertical"; // horizontal = side-by-side, vertical = top-bottom
-  ratio: number;
-  first: PaneNode;
-  second: PaneNode;
-  element: HTMLDivElement;
-}
-
-type PaneNode = LeafNode | SplitNode;
-
 interface Tab {
   id: string;
   name: string;
-  root: PaneNode;
+  root: PaneNode<Pane>;
   container: HTMLDivElement;
   presetId?: string;
 }
@@ -200,20 +193,7 @@ function getActivePane(): Pane | null {
   return findPaneById(tab.root, activePaneId);
 }
 
-function findPaneById(node: PaneNode, id: string | null): Pane | null {
-  if (!id) return null;
-  if (node.type === "leaf") {
-    return node.pane.id === id ? node.pane : null;
-  }
-  return findPaneById(node.first, id) || findPaneById(node.second, id);
-}
-
-function getAllPanes(node: PaneNode): Pane[] {
-  if (node.type === "leaf") return [node.pane];
-  return [...getAllPanes(node.first), ...getAllPanes(node.second)];
-}
-
-function fitAllPanes(node: PaneNode): void {
+function fitAllPanes(node: PaneNode<Pane>): void {
   for (const pane of getAllPanes(node)) {
     try {
       pane.fitAddon.fit();
@@ -228,14 +208,13 @@ function fitAllPanes(node: PaneNode): void {
 
 // --- Pane Tree Rendering ---
 
-function renderPaneTree(node: PaneNode): HTMLElement {
+function renderPaneTree(node: PaneNode<Pane>): HTMLElement {
   if (node.type === "leaf") {
     return node.pane.element;
   }
 
   const container = document.createElement("div");
   container.className = `ss-split ss-split--${node.direction}`;
-  node.element = container;
 
   const firstEl = renderPaneTree(node.first);
   const secondEl = renderPaneTree(node.second);
@@ -315,13 +294,12 @@ async function splitPane(
 
   // Replace the active leaf with a split
   tab.root = replaceLeaf(tab.root, activePaneId, (leaf) => {
-    const splitNode: SplitNode = {
+    const splitNode: SplitNode<Pane> = {
       type: "split",
       direction,
       ratio: 0.5,
       first: leaf,
       second: { type: "leaf", pane: newPane },
-      element: document.createElement("div"),
     };
     return splitNode;
   });
@@ -339,24 +317,6 @@ async function splitPane(
       sdk.backend.resizeTerminal(newPane.backendId, newPane.terminal.cols, newPane.terminal.rows);
     }
   }, 100);
-}
-
-function replaceLeaf(
-  node: PaneNode,
-  targetId: string | null,
-  replacer: (leaf: LeafNode) => PaneNode
-): PaneNode {
-  if (node.type === "leaf") {
-    if (node.pane.id === targetId) {
-      return replacer(node);
-    }
-    return node;
-  }
-  return {
-    ...node,
-    first: replaceLeaf(node.first, targetId, replacer),
-    second: replaceLeaf(node.second, targetId, replacer),
-  };
 }
 
 async function closePane(sdk: CaidoSDK, paneId?: string): Promise<void> {
@@ -402,24 +362,6 @@ async function closePane(sdk: CaidoSDK, paneId?: string): Promise<void> {
   }
 }
 
-function removePaneFromTree(node: PaneNode, targetId: string): PaneNode {
-  if (node.type === "leaf") return node;
-
-  // Check if either child is the target leaf
-  if (node.first.type === "leaf" && node.first.pane.id === targetId) {
-    return node.second;
-  }
-  if (node.second.type === "leaf" && node.second.pane.id === targetId) {
-    return node.first;
-  }
-
-  return {
-    ...node,
-    first: removePaneFromTree(node.first, targetId),
-    second: removePaneFromTree(node.second, targetId),
-  };
-}
-
 // --- Tab Management ---
 
 function generateTabId(): string {
@@ -441,7 +383,7 @@ async function createTab(sdk: CaidoSDK, name?: string, preset?: Preset): Promise
 
   const cwd = await resolveWorkingDirectory(sdk, preset);
   const pane = await createPane(sdk, preset?.command, preset?.name, cwd);
-  const root: LeafNode = { type: "leaf", pane };
+  const root: LeafNode<Pane> = { type: "leaf", pane };
 
   container.appendChild(renderPaneTree(root));
 
@@ -834,7 +776,7 @@ function setupEvents(sdk: CaidoSDK): void {
   }
 }
 
-function findPaneByBackendId(node: PaneNode, backendId: string): Pane | null {
+function findPaneByBackendId(node: PaneNode<Pane>, backendId: string): Pane | null {
   if (node.type === "leaf") {
     return node.pane.backendId === backendId ? node.pane : null;
   }
@@ -1166,7 +1108,7 @@ export const init = (sdk: CaidoSDK) => {
   const observer = new MutationObserver(() => {
     const theme = getTheme();
     for (const tab of tabs.values()) {
-      const applyToNode = (node: PaneNode) => {
+      const applyToNode = (node: PaneNode<Pane>) => {
         if (node.type === "leaf") {
           node.pane.terminal.options.theme = theme;
         } else {
