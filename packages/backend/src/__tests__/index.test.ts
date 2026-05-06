@@ -46,6 +46,7 @@ import {
   frameSend,
 } from "../utils";
 import { spawn } from "child_process";
+import { connect } from "net";
 
 // --- Helpers ---
 
@@ -424,6 +425,409 @@ describe("Backend API handlers", () => {
       for (const proc of procs) {
         expect(proc.kill).toHaveBeenCalled();
       }
+    });
+  });
+
+  // --- Helpers for lifecycle tests ---
+  function lastSpawnedProc() {
+    const results = vi.mocked(spawn).mock.results;
+    return results[results.length - 1]?.value;
+  }
+
+  function getProcHandler(proc: any, event: string) {
+    return proc.on.mock.calls.find(
+      ([e]: [string]) => e === event
+    )?.[1];
+  }
+
+  function getStdoutHandler(proc: any) {
+    return proc.stdout.on.mock.calls.find(
+      ([e]: [string]) => e === "data"
+    )?.[1];
+  }
+
+  function getStderrHandler(proc: any) {
+    return proc.stderr.on.mock.calls.find(
+      ([e]: [string]) => e === "data"
+    )?.[1];
+  }
+
+  function createMockSocket() {
+    return {
+      on: vi.fn(),
+      destroy: vi.fn(),
+      setNoDelay: vi.fn(),
+    };
+  }
+
+  function getSocketHandler(sock: any, event: string) {
+    return sock.on.mock.calls.find(
+      ([e]: [string]) => e === event
+    )?.[1];
+  }
+
+  // Sets up `connect()` so that the connect callback is captured rather than
+  // fired immediately — calling it inline would hit a TDZ on the `sock` const
+  // in the source. Returns a function that fires all pending callbacks AFTER
+  // `connect()` has returned and `sock` is initialized.
+  function deferredConnect(socket: ReturnType<typeof createMockSocket>) {
+    const pending: Array<() => void> = [];
+    vi.mocked(connect).mockImplementation(((_port: number, _host: string, cb: () => void) => {
+      if (cb) pending.push(cb);
+      return socket;
+    }) as any);
+    return () => {
+      while (pending.length) pending.shift()!();
+    };
+  }
+
+  describe("process lifecycle events", () => {
+    it("should send terminalExit event when process exits with code", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const exitHandler = getProcHandler(proc, "exit");
+      expect(exitHandler).toBeDefined();
+
+      exitHandler!(0);
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+        terminalId: id,
+        code: 0,
+      });
+    });
+
+    it("should remove terminal from registry on exit", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const exitHandler = getProcHandler(proc, "exit");
+
+      exitHandler!(0);
+      expect(handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id)).toBeUndefined();
+    });
+
+    it("should use -1 as exit code when null is passed", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const exitHandler = getProcHandler(proc, "exit");
+
+      exitHandler!(null);
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+        terminalId: id,
+        code: -1,
+      });
+    });
+
+    it("should propagate non-zero exit codes", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const exitHandler = getProcHandler(proc, "exit");
+
+      exitHandler!(137);
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+        terminalId: id,
+        code: 137,
+      });
+    });
+
+    it("should remove terminal when process emits error", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const errorHandler = getProcHandler(proc, "error");
+      expect(errorHandler).toBeDefined();
+
+      errorHandler!(new Error("spawn failed"));
+      expect(handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id)).toBeUndefined();
+    });
+
+    it("should log relay error message via console.log", () => {
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const errorHandler = getProcHandler(proc, "error");
+
+      errorHandler!(new Error("ENOENT"));
+      expect(sdk.console.log).toHaveBeenCalledWith(
+        expect.stringContaining("[relay error] ENOENT")
+      );
+    });
+
+    it("should log stderr output via console.log", () => {
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stderrHandler = getStderrHandler(proc);
+      expect(stderrHandler).toBeDefined();
+
+      stderrHandler!(Buffer.from("python traceback"));
+      expect(sdk.console.log).toHaveBeenCalledWith(
+        expect.stringContaining("[relay stderr] python traceback")
+      );
+    });
+  });
+
+  describe("port allocation", () => {
+    it("should use sequential ports for new terminals", () => {
+      handlers.get("createTerminal")!(sdk, "/a", "", "s");
+      handlers.get("createTerminal")!(sdk, "/b", "", "s");
+
+      const calls = vi.mocked(spawn).mock.calls;
+      const args1 = calls[calls.length - 2]?.[1] as string[];
+      const args2 = calls[calls.length - 1]?.[1] as string[];
+      const port1 = parseInt(args1![1]!, 10);
+      const port2 = parseInt(args2![1]!, 10);
+      expect(port2).toBe(port1 + 1);
+    });
+
+    it("should allocate port within valid TCP range", () => {
+      handlers.get("createTerminal")!(sdk, "/a", "", "s");
+      const args = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
+      const port = parseInt(args[1]!, 10);
+      expect(port).toBeGreaterThanOrEqual(18500);
+      expect(port).toBeLessThanOrEqual(32767);
+    });
+  });
+
+  describe("READY signal and socket connection", () => {
+    it("should connect via TCP when stdout emits READY", () => {
+      const mockSocket = createMockSocket();
+      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      expect(connect).toHaveBeenCalledWith(
+        expect.any(Number),
+        "127.0.0.1",
+        expect.any(Function)
+      );
+    });
+
+    it("should not connect when READY token is absent", () => {
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+
+      stdoutHandler!(Buffer.from("starting up..."));
+      expect(connect).not.toHaveBeenCalled();
+    });
+
+    it("should buffer stdout chunks until READY arrives", () => {
+      const mockSocket = createMockSocket();
+      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+
+      stdoutHandler!(Buffer.from("REA"));
+      expect(connect).not.toHaveBeenCalled();
+      stdoutHandler!(Buffer.from("DY:18500\n"));
+      expect(connect).toHaveBeenCalledOnce();
+    });
+
+    it("should send initial resize frame on socket connect", () => {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      flush();
+      expect(frameSend).toHaveBeenCalledWith(
+        mockSocket,
+        expect.objectContaining({ type: "resize", cols: 80, rows: 24 })
+      );
+    });
+
+    it("should send preset command after delay when command is provided", () => {
+      vi.useFakeTimers();
+      try {
+        const mockSocket = createMockSocket();
+        const flush = deferredConnect(mockSocket);
+
+        handlers.get("createTerminal")!(sdk, "/home", "claude", "claude");
+        const proc = lastSpawnedProc();
+        const stdoutHandler = getStdoutHandler(proc);
+
+        stdoutHandler!(Buffer.from("READY:18500\n"));
+        flush();
+        // Initial resize was sent, but command frame is deferred
+        const callsBefore = vi.mocked(frameSend).mock.calls.length;
+        vi.advanceTimersByTime(600);
+        const callsAfter = vi.mocked(frameSend).mock.calls.length;
+        expect(callsAfter).toBeGreaterThan(callsBefore);
+
+        const lastCall = vi.mocked(frameSend).mock.calls.at(-1);
+        expect(lastCall?.[1]).toEqual({ type: "input", data: "claude\n" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should not send preset command if terminal is destroyed before delay fires", () => {
+      vi.useFakeTimers();
+      try {
+        const mockSocket = createMockSocket();
+        const flush = deferredConnect(mockSocket);
+
+        const id = handlers.get("createTerminal")!(sdk, "/home", "claude", "claude");
+        const proc = lastSpawnedProc();
+        const stdoutHandler = getStdoutHandler(proc);
+
+        stdoutHandler!(Buffer.from("READY:18500\n"));
+        flush();
+        const callsAfterReady = vi.mocked(frameSend).mock.calls.length;
+
+        // Destroy before the deferred command fires
+        handlers.get("destroyTerminal")!(sdk, id);
+        vi.advanceTimersByTime(1000);
+
+        // No new frameSend calls beyond what happened on connect
+        expect(vi.mocked(frameSend).mock.calls.length).toBe(callsAfterReady);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should forward socket data as terminalOutput events", () => {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      flush();
+
+      const dataHandler = getSocketHandler(mockSocket, "data");
+      expect(dataHandler).toBeDefined();
+      dataHandler!(Buffer.from("hello world"));
+
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalOutput", {
+        terminalId: id,
+        data: "hello world",
+      });
+    });
+
+    it("should clear session.socket on close event", () => {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      flush();
+
+      // Sanity: after connect, writeTerminal succeeds
+      expect(handlers.get("writeTerminal")!(sdk, id, "x")).toBe(true);
+
+      const closeHandler = getSocketHandler(mockSocket, "close");
+      closeHandler!();
+
+      // After close, the socket is null again so write fails
+      expect(handlers.get("writeTerminal")!(sdk, id, "x")).toBe(false);
+    });
+
+    it("should handle socket error by clearing session.socket and logging", () => {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      flush();
+
+      const errorHandler = getSocketHandler(mockSocket, "error");
+      errorHandler!(new Error("ECONNRESET"));
+
+      expect(sdk.console.log).toHaveBeenCalledWith(
+        expect.stringContaining("[relay] socket error: ECONNRESET")
+      );
+      expect(handlers.get("writeTerminal")!(sdk, id, "x")).toBe(false);
+    });
+
+    it("should destroy late-arriving socket if terminal was already terminated", () => {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+
+      // Terminal destroyed before the connect callback fires
+      handlers.get("destroyTerminal")!(sdk, id);
+      flush();
+
+      expect(mockSocket.destroy).toHaveBeenCalled();
+    });
+
+    it("should ignore READY when session is already terminating", () => {
+      const mockSocket = createMockSocket();
+      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      handlers.get("destroyTerminal")!(sdk, id);
+
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+
+      expect(connect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("writeTerminal / resizeTerminal with connected socket", () => {
+    function createConnectedTerminal(): { id: string; socket: ReturnType<typeof createMockSocket> } {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      flush();
+      return { id, socket: mockSocket };
+    }
+
+    it("writeTerminal should send input frame and return true", () => {
+      const { id, socket } = createConnectedTerminal();
+      vi.mocked(frameSend).mockClear();
+
+      expect(handlers.get("writeTerminal")!(sdk, id, "ls\n")).toBe(true);
+      expect(frameSend).toHaveBeenCalledWith(socket, {
+        type: "input",
+        data: "ls\n",
+      });
+    });
+
+    it("resizeTerminal should send resize frame and return true", () => {
+      const { id, socket } = createConnectedTerminal();
+      vi.mocked(frameSend).mockClear();
+
+      expect(handlers.get("resizeTerminal")!(sdk, id, 120, 40)).toBe(true);
+      expect(frameSend).toHaveBeenCalledWith(socket, {
+        type: "resize",
+        cols: 120,
+        rows: 40,
+      });
+    });
+
+    it("destroyTerminal should call socket.destroy on the connected socket", () => {
+      const { id, socket } = createConnectedTerminal();
+      handlers.get("destroyTerminal")!(sdk, id);
+      expect(socket.destroy).toHaveBeenCalled();
+    });
+
+    it("destroyAllTerminals should destroy all connected sockets", () => {
+      const t1 = createConnectedTerminal();
+      const t2 = createConnectedTerminal();
+      handlers.get("destroyAllTerminals")!(sdk);
+      expect(t1.socket.destroy).toHaveBeenCalled();
+      expect(t2.socket.destroy).toHaveBeenCalled();
     });
   });
 });
