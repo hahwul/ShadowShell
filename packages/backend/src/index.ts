@@ -85,8 +85,6 @@ def run():
         log(f"accepted from {addr}")
     except socket.timeout:
         log("accept timeout")
-        try: srv.close()
-        except: pass
         cleanup()
         sys.exit(1)
     finally:
@@ -102,6 +100,9 @@ def run():
     # Inbound: framed messages from client. Outbound: raw PTY bytes to client.
     # PTY write buffer: data the client sent as "input" but we couldn't fully
     # write to the PTY yet because the kernel buffer was full.
+    # OUT_CAP bounds the outbound buffer so a stuck/slow client can't grow
+    # this relay's memory without limit.
+    OUT_CAP = 8 * 1024 * 1024
     in_buf = b""
     out_buf = b""
     pty_buf = b""
@@ -125,6 +126,10 @@ def run():
                         if not data:
                             raise EOFError
                         out_buf += data
+                        if len(out_buf) > OUT_CAP:
+                            log(f"out_buf exceeded {OUT_CAP} bytes; dropping client")
+                            cleanup()
+                            return
                     except BlockingIOError:
                         pass
                     except (OSError, EOFError):
