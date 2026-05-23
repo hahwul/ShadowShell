@@ -180,10 +180,14 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
 
 function setActivePane(paneId: string): void {
   activePaneId = paneId;
-  // Update active pane border
-  document.querySelectorAll(".ss-pane").forEach((el) => {
-    el.classList.toggle("ss-pane--active", el.getAttribute("data-pane-id") === paneId);
-  });
+  // Only toggle within the active tab — `.ss-pane` exists in every tab and
+  // every dropup, so a document-wide query would clobber inactive tabs.
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (tab) {
+    tab.container.querySelectorAll(".ss-pane").forEach((el) => {
+      el.classList.toggle("ss-pane--active", el.getAttribute("data-pane-id") === paneId);
+    });
+  }
   updateStatusBar(sdkRef);
 }
 

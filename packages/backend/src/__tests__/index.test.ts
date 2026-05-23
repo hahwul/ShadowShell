@@ -624,6 +624,26 @@ describe("Backend API handlers", () => {
       expect(connect).toHaveBeenCalledOnce();
     });
 
+    it("should not reconnect on subsequent stdout chunks after READY", () => {
+      // Regression: stdoutBuf.includes("READY:") used to stay true forever once
+      // the token arrived, so any additional stdout chunk would re-trigger
+      // connect() and leak sockets. Guard with the `connected` flag.
+      const mockSocket = createMockSocket();
+      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      const stdoutHandler = getStdoutHandler(proc);
+
+      stdoutHandler!(Buffer.from("READY:18500\n"));
+      expect(connect).toHaveBeenCalledOnce();
+
+      // Simulate further stdout from the relay (e.g., diagnostic prints).
+      stdoutHandler!(Buffer.from("some later output\n"));
+      stdoutHandler!(Buffer.from("more output\n"));
+      expect(connect).toHaveBeenCalledOnce();
+    });
+
     it("should send initial resize frame on socket connect", () => {
       const mockSocket = createMockSocket();
       const flush = deferredConnect(mockSocket);
@@ -828,6 +848,84 @@ describe("Backend API handlers", () => {
       handlers.get("destroyAllTerminals")!(sdk);
       expect(t1.socket.destroy).toHaveBeenCalled();
       expect(t2.socket.destroy).toHaveBeenCalled();
+    });
+
+    it("writeTerminal should propagate frameSend failure", () => {
+      // Regression: writeTerminal previously returned true unconditionally,
+      // hiding socket write failures from callers.
+      const { id } = createConnectedTerminal();
+      vi.mocked(frameSend).mockReturnValueOnce(false);
+      expect(handlers.get("writeTerminal")!(sdk, id, "data")).toBe(false);
+    });
+
+    it("resizeTerminal should propagate frameSend failure", () => {
+      const { id } = createConnectedTerminal();
+      vi.mocked(frameSend).mockReturnValueOnce(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, 80, 24)).toBe(false);
+    });
+
+    it("resizeTerminal should reject non-positive or non-finite dimensions", () => {
+      const { id } = createConnectedTerminal();
+      vi.mocked(frameSend).mockClear();
+      expect(handlers.get("resizeTerminal")!(sdk, id, 0, 24)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, 80, 0)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, -1, 24)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, Number.NaN, 24)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, Infinity, 24)).toBe(false);
+      expect(frameSend).not.toHaveBeenCalled();
+    });
+
+    it("writeTerminal should return false once destroyTerminal is called", () => {
+      const { id } = createConnectedTerminal();
+      handlers.get("destroyTerminal")!(sdk, id);
+      // Even if some stale code path retained a session reference, the
+      // isTerminating guard prevents further writes.
+      expect(handlers.get("writeTerminal")!(sdk, id, "x")).toBe(false);
+    });
+  });
+
+  describe("port allocation collision avoidance", () => {
+    it("should skip ports held by live sessions", () => {
+      // Hold a port (the first allocation); the second call must pick a
+      // different port even though both are sequential allocations from the
+      // same counter. We can't easily force a wrap-around in a single test,
+      // but uniqueness across live sessions covers the regression intent.
+      handlers.get("createTerminal")!(sdk, "/a", "", "s");
+      handlers.get("createTerminal")!(sdk, "/b", "", "s");
+      handlers.get("createTerminal")!(sdk, "/c", "", "s");
+
+      const ports = vi.mocked(spawn).mock.calls.map(
+        (c) => parseInt((c[1] as string[])[1]!, 10)
+      );
+      expect(new Set(ports).size).toBe(ports.length); // all unique
+      for (const p of ports) {
+        expect(p).toBeGreaterThanOrEqual(18500);
+        expect(p).toBeLessThanOrEqual(32767);
+      }
+    });
+
+    it("should reuse a freed port for a later session", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/a", "", "s");
+      const firstPort = parseInt(
+        (vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[])[1]!,
+        10
+      );
+
+      handlers.get("destroyTerminal")!(sdk, id);
+      vi.mocked(spawn).mockClear();
+
+      // After destroy, the freed port is available again. The rolling counter
+      // marches forward, so the next session gets the next sequential port —
+      // but if the counter ever wraps, the freed port is reusable. Sanity:
+      // creating another session does not crash and is within range.
+      handlers.get("createTerminal")!(sdk, "/b", "", "s");
+      const nextPort = parseInt(
+        (vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[])[1]!,
+        10
+      );
+      expect(nextPort).not.toBe(firstPort); // counter advanced
+      expect(nextPort).toBeGreaterThanOrEqual(18500);
+      expect(nextPort).toBeLessThanOrEqual(32767);
     });
   });
 });

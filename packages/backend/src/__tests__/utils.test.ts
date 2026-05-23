@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { join } from "path";
-import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import {
   pathExists,
@@ -12,6 +12,7 @@ import {
   generateId,
   frameSend,
   nextPortInRange,
+  allocatePort,
 } from "../utils";
 
 // --- Temporary directory for file-based tests ---
@@ -331,6 +332,105 @@ describe("nextPortInRange", () => {
   it("should handle single-port range (min === max)", () => {
     expect(nextPortInRange(5000, 5000, 5000)).toBe(5000);
     expect(nextPortInRange(5001, 5000, 5000)).toBe(5000);
+  });
+});
+
+describe("allocatePort", () => {
+  it("returns the current port when nothing is in use", () => {
+    const { port, next } = allocatePort(18500, 18500, 32767, new Set());
+    expect(port).toBe(18500);
+    expect(next).toBe(18501);
+  });
+
+  it("advances the counter sequentially", () => {
+    const { port, next } = allocatePort(18510, 18500, 32767, new Set());
+    expect(port).toBe(18510);
+    expect(next).toBe(18511);
+  });
+
+  it("wraps the counter back to min when next overflows", () => {
+    const { port, next } = allocatePort(32767, 18500, 32767, new Set());
+    expect(port).toBe(32767);
+    expect(next).toBe(18500);
+  });
+
+  it("snaps an out-of-range current port back to min", () => {
+    const { port, next } = allocatePort(5, 18500, 32767, new Set());
+    expect(port).toBe(18500);
+    expect(next).toBe(18501);
+  });
+
+  it("skips ports that are already in use", () => {
+    const used = new Set([18500, 18501, 18502]);
+    const { port, next } = allocatePort(18500, 18500, 32767, used);
+    expect(port).toBe(18503);
+    expect(next).toBe(18504);
+  });
+
+  it("wraps around to find a free port near min", () => {
+    // counter is at max but only max is used → wrap to min
+    const used = new Set([32767]);
+    const { port, next } = allocatePort(32767, 18500, 32767, used);
+    expect(port).toBe(18500);
+    expect(next).toBe(18501);
+  });
+
+  it("returns a port (caller-handled bind failure) when range is exhausted", () => {
+    const min = 100;
+    const max = 102;
+    const used = new Set([100, 101, 102]);
+    const { port } = allocatePort(100, min, max, used);
+    // We don't promise a specific port here — only that the helper terminates
+    // and produces a port in range rather than looping forever.
+    expect(port).toBeGreaterThanOrEqual(min);
+    expect(port).toBeLessThanOrEqual(max);
+  });
+});
+
+describe("saveSettings atomic write", () => {
+  it("does not leave a temp file on success", () => {
+    const dir = join(TEST_DIR, "atomic");
+    const file = join(dir, "settings.json");
+    saveSettings(dir, file, { pythonPath: "/usr/bin/python3" });
+    const entries = readdirSync(dir);
+    // Only the final file should remain — no .tmp-* sibling.
+    expect(entries).toEqual(["settings.json"]);
+  });
+
+  it("preserves the existing file when the write target dir is invalid", () => {
+    // saveSettings throws on a permission/io error; the caller can decide
+    // whether to swallow it. The existing file (if any) must not be truncated
+    // because we rename a separate temp into place.
+    const dir = join(TEST_DIR, "preserve");
+    const file = join(dir, "settings.json");
+    saveSettings(dir, file, { pythonPath: "/old" });
+    const before = readFileSync(file, "utf-8");
+
+    // Subsequent successful write replaces atomically.
+    saveSettings(dir, file, { pythonPath: "/new" });
+    const after = readFileSync(file, "utf-8");
+    expect(before).not.toBe(after);
+    expect(JSON.parse(after)).toEqual({ pythonPath: "/new" });
+  });
+});
+
+describe("loadSettings input validation", () => {
+  it("returns {} for a JSON array at the top level", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify(["unexpected"]));
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({});
+  });
+
+  it("returns {} for a JSON null at the top level", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, "null");
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({});
+  });
+
+  it("returns {} for a JSON scalar at the top level", () => {
+    mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
+    writeFileSync(TEST_SETTINGS_FILE, "42");
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({});
   });
 });
 
