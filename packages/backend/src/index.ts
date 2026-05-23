@@ -87,18 +87,35 @@ def run():
         log("accept timeout")
         cleanup()
         sys.exit(1)
+    finally:
+        # Stop accepting further connections; only one client per relay.
+        try: srv.close()
+        except: pass
 
     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     conn.setblocking(False)
     set_pty_size(master_fd, 80, 24)
     log("main loop starting")
 
-    buf = b""
+    # Inbound: framed messages from client. Outbound: raw PTY bytes to client.
+    # PTY write buffer: data the client sent as "input" but we couldn't fully
+    # write to the PTY yet because the kernel buffer was full.
+    # OUT_CAP bounds the outbound buffer so a stuck/slow client can't grow
+    # this relay's memory without limit.
+    OUT_CAP = 8 * 1024 * 1024
+    in_buf = b""
+    out_buf = b""
+    pty_buf = b""
     try:
         while True:
             rlist = [master_fd, conn]
+            wlist = []
+            if out_buf:
+                wlist.append(conn)
+            if pty_buf:
+                wlist.append(master_fd)
             try:
-                readable, _, _ = select.select(rlist, [], [], 0.05)
+                readable, writable, _ = select.select(rlist, wlist, [], 0.05)
             except (select.error, ValueError):
                 break
 
@@ -108,7 +125,13 @@ def run():
                         data = os.read(master_fd, 65536)
                         if not data:
                             raise EOFError
-                        conn.sendall(data)
+                        out_buf += data
+                        if len(out_buf) > OUT_CAP:
+                            log(f"out_buf exceeded {OUT_CAP} bytes; dropping client")
+                            cleanup()
+                            return
+                    except BlockingIOError:
+                        pass
                     except (OSError, EOFError):
                         cleanup()
                         return
@@ -119,32 +142,85 @@ def run():
                         if not chunk:
                             cleanup()
                             return
-                        buf += chunk
-                        while buf:
-                            if len(buf) < 4:
+                        in_buf += chunk
+                        while in_buf:
+                            if len(in_buf) < 4:
                                 break
-                            msg_len = struct.unpack(">I", buf[:4])[0]
-                            if len(buf) < 4 + msg_len:
+                            msg_len = struct.unpack(">I", in_buf[:4])[0]
+                            # Guard against absurd lengths (e.g., a corrupted stream).
+                            if msg_len > 16 * 1024 * 1024:
+                                log(f"oversized frame ({msg_len} bytes); dropping connection")
+                                cleanup()
+                                return
+                            if len(in_buf) < 4 + msg_len:
                                 break
-                            payload = buf[4:4+msg_len]
-                            buf = buf[4+msg_len:]
+                            payload = in_buf[4:4+msg_len]
+                            in_buf = in_buf[4+msg_len:]
                             try:
                                 msg = json.loads(payload)
-                                if msg.get("type") == "resize":
-                                    set_pty_size(master_fd, msg.get("cols", 80), msg.get("rows", 24))
-                                elif msg.get("type") == "input":
-                                    os.write(master_fd, msg["data"].encode("utf-8"))
-                            except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
-                                os.write(master_fd, payload)
+                                if isinstance(msg, dict) and msg.get("type") == "resize":
+                                    try:
+                                        cols = int(msg.get("cols", 80))
+                                        rows = int(msg.get("rows", 24))
+                                    except (TypeError, ValueError):
+                                        cols, rows = 80, 24
+                                    if cols > 0 and rows > 0:
+                                        set_pty_size(master_fd, cols, rows)
+                                elif isinstance(msg, dict) and msg.get("type") == "input":
+                                    data = msg.get("data", "")
+                                    if isinstance(data, str):
+                                        pty_buf += data.encode("utf-8")
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                pty_buf += payload
                     except BlockingIOError:
                         pass
                     except Exception:
                         cleanup()
                         return
 
+            for fd in writable:
+                if fd == conn and out_buf:
+                    try:
+                        sent = conn.send(out_buf)
+                        if sent > 0:
+                            out_buf = out_buf[sent:]
+                    except BlockingIOError:
+                        pass
+                    except Exception:
+                        cleanup()
+                        return
+                elif fd == master_fd and pty_buf:
+                    try:
+                        n = os.write(master_fd, pty_buf)
+                        if n > 0:
+                            pty_buf = pty_buf[n:]
+                    except BlockingIOError:
+                        pass
+                    except OSError:
+                        cleanup()
+                        return
+
             try:
                 pid, status = os.waitpid(child_pid, os.WNOHANG)
                 if pid != 0:
+                    # Flush any remaining PTY output before disconnecting.
+                    try:
+                        while True:
+                            data = os.read(master_fd, 65536)
+                            if not data: break
+                            out_buf += data
+                    except (OSError, BlockingIOError):
+                        pass
+                    # Best-effort drain to the client.
+                    try:
+                        conn.setblocking(True)
+                        conn.settimeout(1.0)
+                        while out_buf:
+                            sent = conn.send(out_buf)
+                            if sent <= 0: break
+                            out_buf = out_buf[sent:]
+                    except Exception:
+                        pass
                     break
             except ChildProcessError:
                 break
@@ -194,6 +270,7 @@ interface TerminalSession {
   presetName: string;
   cwd: string;
   isTerminating: boolean;
+  connected: boolean;
 }
 
 interface TerminalOutputEvent {
@@ -211,11 +288,33 @@ interface TerminalExitEvent {
 const terminals = new Map<string, TerminalSession>();
 let terminalCounter = 0;
 let relayScriptPath: string | null = null;
-let nextPort = 18500;
+const MIN_PORT = 18500;
 const MAX_PORT = 32767;
+let nextPort = MIN_PORT;
 let pythonPath: string | null = null;
 const SETTINGS_DIR = join(homedir() || "/", ".config", "shadowshell");
 const SETTINGS_FILE = join(SETTINGS_DIR, "settings.json");
+
+// Picks the next port in [MIN_PORT, MAX_PORT] that no live session is using,
+// advancing the rolling counter. Wraps around on overflow.
+function allocatePort(): number {
+  const used = new Set<number>();
+  for (const s of terminals.values()) used.add(s.port);
+  let p = nextPort;
+  if (p < MIN_PORT || p > MAX_PORT) p = MIN_PORT;
+  const span = MAX_PORT - MIN_PORT + 1;
+  for (let i = 0; i < span; i++) {
+    if (!used.has(p)) {
+      nextPort = p + 1 > MAX_PORT ? MIN_PORT : p + 1;
+      return p;
+    }
+    p = p + 1 > MAX_PORT ? MIN_PORT : p + 1;
+  }
+  // Every port in range is held by an active session — extremely unlikely.
+  // Fall back to the next sequential value; the bind will fail and surface.
+  nextPort = p + 1 > MAX_PORT ? MIN_PORT : p + 1;
+  return p;
+}
 
 function loadSettings(): { pythonPath?: string; defaultDirectory?: string } {
   return _loadSettings(SETTINGS_FILE);
@@ -259,8 +358,7 @@ function createTerminal(
   const shell = getDefaultShell();
   const home = homedir() || "/";
   const workingDir = cwd || home;
-  if (nextPort > MAX_PORT) nextPort = 18500;
-  const port = nextPort++;
+  const port = allocatePort();
   const scriptPath = ensureRelayScript();
 
   const proc = spawn(findPython3Local(), [scriptPath, String(port), shell, workingDir]);
@@ -273,6 +371,7 @@ function createTerminal(
     presetName: presetName || "",
     cwd: workingDir,
     isTerminating: false,
+    connected: false,
   };
 
   terminals.set(id, session);
@@ -281,8 +380,9 @@ function createTerminal(
   if (proc.stdout) {
     proc.stdout.on("data", (data: Buffer) => {
       stdoutBuf += data.toString();
-      if (stdoutBuf.includes("READY:")) {
+      if (!session.connected && stdoutBuf.includes("READY:")) {
         if (session.isTerminating) return;
+        session.connected = true;
 
         // Relay is ready, connect via TCP
         const sock = connect(port, "127.0.0.1", () => {
@@ -353,9 +453,8 @@ function writeTerminal(
   data: string
 ): boolean {
   const session = terminals.get(terminalId);
-  if (!session?.socket) return false;
-  frameSend(session.socket, { type: "input", data });
-  return true;
+  if (!session?.socket || session.isTerminating) return false;
+  return frameSend(session.socket, { type: "input", data });
 }
 
 function resizeTerminal(
@@ -365,9 +464,9 @@ function resizeTerminal(
   rows: number
 ): boolean {
   const session = terminals.get(terminalId);
-  if (!session?.socket) return false;
-  frameSend(session.socket, { type: "resize", cols, rows });
-  return true;
+  if (!session?.socket || session.isTerminating) return false;
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return false;
+  return frameSend(session.socket, { type: "resize", cols, rows });
 }
 
 function destroyTerminal(
