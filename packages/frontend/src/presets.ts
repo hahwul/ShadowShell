@@ -84,10 +84,21 @@ const OVERRIDES_KEY = "shadowshell-preset-overrides";
 const CUSTOM_KEY = "shadowshell-custom-presets";
 
 // Overrides: { [builtinId]: { command?, name?, description? } }
+// localStorage is user-editable and may hold anything; a malformed value must
+// not take down the preset bar.
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
 export function loadOverrides(): Record<string, Partial<Preset>> {
   try {
     const stored = localStorage.getItem(OVERRIDES_KEY);
-    return stored ? JSON.parse(stored) : {};
+    const parsed: unknown = stored ? JSON.parse(stored) : {};
+    if (!isRecord(parsed)) return {};
+    const result: Record<string, Partial<Preset>> = {};
+    for (const [id, ov] of Object.entries(parsed)) {
+      if (isRecord(ov)) result[id] = ov as Partial<Preset>;
+    }
+    return result;
   } catch {
     return {};
   }
@@ -100,7 +111,11 @@ export function saveOverrides(overrides: Record<string, Partial<Preset>>): void 
 export function loadCustomPresets(): Preset[] {
   try {
     const stored = localStorage.getItem(CUSTOM_KEY);
-    return stored ? JSON.parse(stored) : [];
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is Preset => isRecord(p) && typeof p.id === "string" && typeof p.name === "string"
+    );
   } catch {
     return [];
   }

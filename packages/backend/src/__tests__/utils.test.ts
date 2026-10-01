@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { join } from "path";
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, symlinkSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import {
   pathExists,
@@ -11,8 +11,8 @@ import {
   getDefaultShell,
   generateId,
   frameSend,
-  nextPortInRange,
-  allocatePort,
+  splitUtf8Tail,
+  writeFileAtomic,
 } from "../utils";
 
 // --- Temporary directory for file-based tests ---
@@ -314,76 +314,51 @@ describe("frameSend", () => {
   });
 });
 
-describe("nextPortInRange", () => {
-  it("should return current port when within range", () => {
-    expect(nextPortInRange(18500, 32767, 18500)).toBe(18500);
-    expect(nextPortInRange(25000, 32767, 18500)).toBe(25000);
+describe("splitUtf8Tail", () => {
+  const split = (buf: Buffer) => splitUtf8Tail(buf).map((b) => [...b]);
+
+  it("returns the whole buffer for ASCII", () => {
+    expect(split(Buffer.from("abc"))).toEqual([[0x61, 0x62, 0x63], []]);
   });
 
-  it("should reset to min when exceeding max", () => {
-    expect(nextPortInRange(32768, 32767, 18500)).toBe(18500);
-    expect(nextPortInRange(40000, 32767, 18500)).toBe(18500);
+  it("returns the whole buffer when the last character is complete", () => {
+    const buf = Buffer.from("a한✓😀", "utf-8");
+    expect(split(buf)).toEqual([[...buf], []]);
   });
 
-  it("should return current when exactly at max", () => {
-    expect(nextPortInRange(32767, 32767, 18500)).toBe(32767);
+  it("splits off an incomplete 2/3/4-byte sequence", () => {
+    for (const ch of ["é", "한", "😀"]) {
+      const bytes = Buffer.from(`a${ch}`, "utf-8");
+      for (let cut = 2; cut < bytes.length; cut++) {
+        const [head, tail] = splitUtf8Tail(bytes.subarray(0, cut));
+        expect([...head]).toEqual([0x61]);
+        expect([...tail]).toEqual([...bytes.subarray(1, cut)]);
+      }
+    }
   });
 
-  it("should handle single-port range (min === max)", () => {
-    expect(nextPortInRange(5000, 5000, 5000)).toBe(5000);
-    expect(nextPortInRange(5001, 5000, 5000)).toBe(5000);
+  it("does not hold back stray continuation bytes forever", () => {
+    const buf = Buffer.from([0x61, 0x80, 0x80, 0x80]);
+    expect(split(buf)).toEqual([[...buf], []]);
+  });
+
+  it("handles an empty buffer", () => {
+    expect(split(Buffer.alloc(0))).toEqual([[], []]);
   });
 });
 
-describe("allocatePort", () => {
-  it("returns the current port when nothing is in use", () => {
-    const { port, next } = allocatePort(18500, 18500, 32767, new Set());
-    expect(port).toBe(18500);
-    expect(next).toBe(18501);
+describe("writeFileAtomic", () => {
+  it("writes the content and leaves no temp file behind", () => {
+    const file = join(TEST_DIR, "atomic.txt");
+    writeFileAtomic(file, "hello");
+    expect(readFileSync(file, "utf-8")).toBe("hello");
+    expect(readdirSync(TEST_DIR)).toEqual(["atomic.txt"]);
   });
 
-  it("advances the counter sequentially", () => {
-    const { port, next } = allocatePort(18510, 18500, 32767, new Set());
-    expect(port).toBe(18510);
-    expect(next).toBe(18511);
-  });
-
-  it("wraps the counter back to min when next overflows", () => {
-    const { port, next } = allocatePort(32767, 18500, 32767, new Set());
-    expect(port).toBe(32767);
-    expect(next).toBe(18500);
-  });
-
-  it("snaps an out-of-range current port back to min", () => {
-    const { port, next } = allocatePort(5, 18500, 32767, new Set());
-    expect(port).toBe(18500);
-    expect(next).toBe(18501);
-  });
-
-  it("skips ports that are already in use", () => {
-    const used = new Set([18500, 18501, 18502]);
-    const { port, next } = allocatePort(18500, 18500, 32767, used);
-    expect(port).toBe(18503);
-    expect(next).toBe(18504);
-  });
-
-  it("wraps around to find a free port near min", () => {
-    // counter is at max but only max is used → wrap to min
-    const used = new Set([32767]);
-    const { port, next } = allocatePort(32767, 18500, 32767, used);
-    expect(port).toBe(18500);
-    expect(next).toBe(18501);
-  });
-
-  it("returns a port (caller-handled bind failure) when range is exhausted", () => {
-    const min = 100;
-    const max = 102;
-    const used = new Set([100, 101, 102]);
-    const { port } = allocatePort(100, min, max, used);
-    // We don't promise a specific port here — only that the helper terminates
-    // and produces a port in range rather than looping forever.
-    expect(port).toBeGreaterThanOrEqual(min);
-    expect(port).toBeLessThanOrEqual(max);
+  it("creates the file with owner-only permissions", () => {
+    const file = join(TEST_DIR, "private.txt");
+    writeFileAtomic(file, "secret");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });
 

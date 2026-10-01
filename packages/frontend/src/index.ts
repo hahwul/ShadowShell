@@ -12,7 +12,7 @@ import {
   deleteCustomPreset,
   ICONS,
 } from "./presets";
-import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon } from "./helpers";
+import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon, toColorInputValue } from "./helpers";
 import {
   findPaneById,
   getAllPanes,
@@ -127,6 +127,37 @@ function generatePaneId(): string {
   return `pane-${++paneCounter}`;
 }
 
+// Backend calls made from event handlers are fire-and-forget; swallow
+// rejections (e.g. while the backend reloads) instead of leaking unhandled ones.
+function quiet(promise: Promise<unknown>): void {
+  promise.catch(() => {});
+}
+
+// Last size pushed per terminal, so divider drags and observer ticks that
+// don't change cols/rows don't each cost a backend round trip.
+const syncedSizes = new WeakMap<Terminal, string>();
+
+function syncBackendSize(backendId: string | null, terminal: Terminal): void {
+  if (!backendId) return;
+  const key = `${backendId}:${terminal.cols}x${terminal.rows}`;
+  if (syncedSizes.get(terminal) === key) return;
+  syncedSizes.set(terminal, key);
+  quiet(sdkRef.backend.resizeTerminal(backendId, terminal.cols, terminal.rows));
+}
+
+// Fits a terminal to its container and pushes the new size to the backend.
+// A hidden or detached terminal measures 0x0; fitting it would shrink the PTY
+// to a couple of columns and make running programs re-wrap their output.
+function fitTerminal(element: HTMLElement, fitAddon: FitAddon, terminal: Terminal, backendId: string | null): void {
+  if (element.offsetWidth === 0 || element.offsetHeight === 0) return;
+  try {
+    fitAddon.fit();
+  } catch {
+    return;
+  }
+  syncBackendSize(backendId, terminal);
+}
+
 async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, cwd?: string): Promise<Pane> {
   const id = generatePaneId();
 
@@ -171,11 +202,21 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
 
   terminal.onData((data) => {
     if (pane.backendId) {
-      sdk.backend.writeTerminal(pane.backendId, data);
+      quiet(sdk.backend.writeTerminal(pane.backendId, data));
     }
   });
 
   return pane;
+}
+
+// Kills the backend session and releases the xterm instance. Clearing
+// backendId first means late output/exit events no longer match this pane.
+function disposePane(sdk: CaidoSDK, pane: Pane): void {
+  if (pane.backendId) {
+    quiet(sdk.backend.destroyTerminal(pane.backendId));
+    pane.backendId = null;
+  }
+  pane.terminal.dispose();
 }
 
 function setActivePane(paneId: string): void {
@@ -199,18 +240,28 @@ function getActivePane(): Pane | null {
 
 function fitAllPanes(node: PaneNode<Pane>): void {
   for (const pane of getAllPanes(node)) {
-    try {
-      pane.fitAddon.fit();
-      if (pane.backendId) {
-        sdkRef.backend.resizeTerminal(pane.backendId, pane.terminal.cols, pane.terminal.rows);
-      }
-    } catch {
-      // ignore
-    }
+    fitTerminal(pane.element, pane.fitAddon, pane.terminal, pane.backendId);
   }
 }
 
 // --- Pane Tree Rendering ---
+
+// Size split children with proportional flex-grow from a zero basis. This
+// overrides the `.ss-pane { flex: 1 }` default (which would otherwise make
+// width/height percentages ineffective and split every pane 50/50) and keeps
+// the divider's fixed size out of the ratio.
+function applyRatio(firstEl: HTMLElement, secondEl: HTMLElement, ratio: number): void {
+  firstEl.style.flex = `${ratio} 1 0`;
+  secondEl.style.flex = `${1 - ratio} 1 0`;
+}
+
+// Re-renders a tab's pane tree. Pane elements are reused across renders, so a
+// pane promoted to the root must drop the sizing it had as a split child.
+function mountPaneTree(tab: Tab): void {
+  const el = renderPaneTree(tab.root);
+  if (tab.root.type === "leaf") el.style.flex = "";
+  tab.container.replaceChildren(el);
+}
 
 function renderPaneTree(node: PaneNode<Pane>): HTMLElement {
   if (node.type === "leaf") {
@@ -226,18 +277,7 @@ function renderPaneTree(node: PaneNode<Pane>): HTMLElement {
   const divider = document.createElement("div");
   divider.className = `ss-divider ss-divider--${node.direction}`;
 
-  const pct = node.ratio * 100;
-  if (node.direction === "horizontal") {
-    firstEl.style.width = `${pct}%`;
-    secondEl.style.width = `${100 - pct}%`;
-    firstEl.style.height = "100%";
-    secondEl.style.height = "100%";
-  } else {
-    firstEl.style.height = `${pct}%`;
-    secondEl.style.height = `${100 - pct}%`;
-    firstEl.style.width = "100%";
-    secondEl.style.width = "100%";
-  }
+  applyRatio(firstEl, secondEl, node.ratio);
 
   // Drag to resize
   divider.addEventListener("mousedown", (e) => {
@@ -251,14 +291,7 @@ function renderPaneTree(node: PaneNode<Pane>): HTMLElement {
         ratio = (ev.clientY - rect.top) / rect.height;
       }
       node.ratio = Math.max(0.15, Math.min(0.85, ratio));
-      const p = node.ratio * 100;
-      if (node.direction === "horizontal") {
-        firstEl.style.width = `${p}%`;
-        secondEl.style.width = `${100 - p}%`;
-      } else {
-        firstEl.style.height = `${p}%`;
-        secondEl.style.height = `${100 - p}%`;
-      }
+      applyRatio(firstEl, secondEl, node.ratio);
       fitAllPanes(node);
     };
     const onUp = () => {
@@ -285,6 +318,10 @@ async function splitPane(
 ): Promise<void> {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
+  // Capture the target now: the awaits below yield, and the user may switch
+  // tabs or close this pane before the new terminal is ready.
+  const targetId = activePaneId;
+  if (!findPaneById(tab.root, targetId)) return;
 
   const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
   const cwd = await resolveWorkingDirectory(sdk, preset);
@@ -296,8 +333,14 @@ async function splitPane(
     return;
   }
 
-  // Replace the active leaf with a split
-  tab.root = replaceLeaf(tab.root, activePaneId, (leaf) => {
+  if (!tabs.includes(tab) || !findPaneById(tab.root, targetId)) {
+    // Target vanished meanwhile; don't leak an invisible backend shell.
+    disposePane(sdk, newPane);
+    return;
+  }
+
+  // Replace the target leaf with a split
+  tab.root = replaceLeaf(tab.root, targetId, (leaf) => {
     const splitNode: SplitNode<Pane> = {
       type: "split",
       direction,
@@ -308,55 +351,38 @@ async function splitPane(
     return splitNode;
   });
 
-  // Re-render the tab
-  tab.container.innerHTML = "";
-  tab.container.appendChild(renderPaneTree(tab.root));
+  mountPaneTree(tab);
 
-  setActivePane(newPane.id);
+  const isActiveTab = tab.id === activeTabId;
+  if (isActiveTab) setActivePane(newPane.id);
 
   setTimeout(() => {
     fitAllPanes(tab.root);
-    newPane.terminal.focus();
-    if (newPane.backendId) {
-      sdk.backend.resizeTerminal(newPane.backendId, newPane.terminal.cols, newPane.terminal.rows);
-    }
+    if (isActiveTab && tab.id === activeTabId) newPane.terminal.focus();
   }, 100);
 }
 
-async function closePane(sdk: CaidoSDK, paneId?: string): Promise<void> {
+function closePane(sdk: CaidoSDK, paneId?: string): void {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
-  const targetId = paneId || activePaneId;
-  const pane = findPaneById(tab.root, targetId);
+  const pane = findPaneById(tab.root, paneId || activePaneId);
   if (!pane) return;
-
-  // Destroy backend
-  if (pane.backendId) {
-    try {
-      await sdk.backend.destroyTerminal(pane.backendId);
-    } catch {
-      // ignore
-    }
-  }
-  pane.terminal.dispose();
 
   // If this is the only pane, close the tab
   if (tab.root.type === "leaf") {
-    await closeTab(sdk, tab.id);
+    closeTab(sdk, tab.id);
     return;
   }
 
-  // Remove the pane from the tree, replacing its parent split with the sibling
-  tab.root = removePaneFromTree(tab.root, targetId!);
-
-  // Re-render
-  tab.container.innerHTML = "";
-  tab.container.appendChild(renderPaneTree(tab.root));
+  // Detach synchronously, before anything yields, so a repeated close (double
+  // click, shortcut repeat) sees the updated tree instead of acting twice.
+  tab.root = removePaneFromTree(tab.root, pane.id);
+  disposePane(sdk, pane);
+  mountPaneTree(tab);
 
   // Set new active pane
-  const remaining = getAllPanes(tab.root);
-  const first = remaining[0];
+  const first = getAllPanes(tab.root)[0];
   if (first) {
     setActivePane(first.id);
     setTimeout(() => {
@@ -376,35 +402,28 @@ async function createTab(sdk: CaidoSDK, name?: string, preset?: Preset): Promise
   const id = generateTabId();
   const tabName = name || preset?.name || `Shell ${tabCounter}`;
 
-  for (const t of tabs) {
-    t.container.style.display = "none";
-  }
-
+  // Stay hidden until registered: switchToTab() only knows about tabs in
+  // `tabs`, so a container shown early could overlap another tab if the user
+  // switches while this one is still being created.
   const container = document.createElement("div");
   container.className = "ss-terminal-container";
   container.id = `ss-term-${id}`;
+  container.style.display = "none";
   terminalArea.appendChild(container);
 
   const cwd = await resolveWorkingDirectory(sdk, preset);
   const pane = await createPane(sdk, preset?.command, preset?.name, cwd);
   const root: LeafNode<Pane> = { type: "leaf", pane };
-
-  container.appendChild(renderPaneTree(root));
-
   const tab: Tab = { id, name: tabName, root, container, presetId: preset?.id };
+  mountPaneTree(tab);
 
   tabs.push(tab);
-  activeTabId = id;
+  switchToTab(sdk, id);
   setActivePane(pane.id);
-  renderTabBar(sdk);
-  updateStatusBar(sdk);
 
   setTimeout(() => {
     fitAllPanes(tab.root);
-    pane.terminal.focus();
-    if (pane.backendId) {
-      sdk.backend.resizeTerminal(pane.backendId, pane.terminal.cols, pane.terminal.rows);
-    }
+    if (tab.id === activeTabId) pane.terminal.focus();
   }, 200);
 
   return tab;
@@ -435,21 +454,16 @@ function switchToTab(sdk: CaidoSDK, tabId: string): void {
   });
 }
 
-async function closeTab(sdk: CaidoSDK, tabId: string): Promise<void> {
+function closeTab(sdk: CaidoSDK, tabId: string): void {
   const idx = tabs.findIndex((t) => t.id === tabId);
   if (idx === -1) return;
 
-  const tab = tabs[idx]!;
-
-  for (const pane of getAllPanes(tab.root)) {
-    if (pane.backendId) {
-      try { await sdk.backend.destroyTerminal(pane.backendId); } catch { /* */ }
-    }
-    pane.terminal.dispose();
-  }
-
-  tab.container.remove();
-  tabs.splice(idx, 1);
+  // Remove from state before tearing anything down. Previously the index was
+  // computed, then backends were awaited, then splice(idx) ran — a second
+  // close in between shifted the array and removed the wrong tab.
+  const [tab] = tabs.splice(idx, 1);
+  tab!.container.remove();
+  for (const pane of getAllPanes(tab!.root)) disposePane(sdk, pane);
 
   if (activeTabId === tabId) {
     if (tabs.length > 0) {
@@ -495,27 +509,21 @@ function doSearch(direction: "next" | "prev"): void {
 
 function changeFontSize(delta: number): void {
   fontSize = Math.max(8, Math.min(24, fontSize + delta));
-  const tab = tabs.find((t) => t.id === activeTabId);
-  if (tab) {
+  // Apply to every tab so all terminals match the size shown in the status
+  // bar; only the visible tab can be measured now, hidden ones refit when
+  // they are switched to.
+  for (const tab of tabs) {
     for (const pane of getAllPanes(tab.root)) {
       pane.terminal.options.fontSize = fontSize;
-      try {
-        pane.fitAddon.fit();
-        if (pane.backendId) {
-          sdkRef.backend.resizeTerminal(pane.backendId, pane.terminal.cols, pane.terminal.rows);
-        }
-      } catch { /* */ }
     }
   }
+  const active = tabs.find((t) => t.id === activeTabId);
+  if (active) fitAllPanes(active.root);
   if (dropupTerminal) {
     dropupTerminal.options.fontSize = fontSize;
-    try {
-      dropupFitAddon?.fit();
-      if (dropupBackendId) {
-        sdkRef.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
-      }
-    } catch { /* */ }
+    fitDropup();
   }
+  updateStatusBar(sdkRef);
 }
 
 // --- UI ---
@@ -551,7 +559,11 @@ function renderTabBar(sdk: CaidoSDK): void {
       const input = document.createElement("input");
       input.className = "ss-tab__rename-input";
       input.value = tab.name;
-      input.addEventListener("blur", () => { tab.name = input.value || tab.name; renderTabBar(sdk); }, { once: true });
+      input.addEventListener("blur", () => {
+        tab.name = input.value.trim() || tab.name;
+        renderTabBar(sdk);
+        updateStatusBar(sdk);
+      }, { once: true });
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") input.blur();
         if (ev.key === "Escape") { input.value = tab.name; input.blur(); }
@@ -807,7 +819,7 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
       <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command || "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
       <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description || "")}" placeholder="Short description" /></label>
       <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory || "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
-      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${preset?.color || "#6b7280"}" /></label>
+      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${escapeAttr(toColorInputValue(preset?.color || ""))}" /></label>
     </div>
     <div class="ss-modal__footer">
       ${isBuiltin ? `<button class="ss-modal__btn ss-modal__btn--reset" data-action="reset">Reset to default</button>` : ""}
@@ -967,8 +979,17 @@ let dropupPanel: HTMLDivElement | null = null;
 let dropupTerminal: Terminal | null = null;
 let dropupFitAddon: FitAddon | null = null;
 let dropupBackendId: string | null = null;
+let dropupStarting = false;
+// Keystrokes typed while a quick-terminal session is still starting.
+let dropupPendingInput: string[] = [];
 let dropupVisible = false;
 let dropupEventsRegistered = false;
+
+function fitDropup(): void {
+  const el = dropupTerminal?.element;
+  if (!dropupVisible || !dropupTerminal || !dropupFitAddon || !el) return;
+  fitTerminal(el, dropupFitAddon, dropupTerminal, dropupBackendId);
+}
 
 function toggleDropup(sdk: CaidoSDK): void {
   if (!dropupPanel) {
@@ -979,14 +1000,32 @@ function toggleDropup(sdk: CaidoSDK): void {
   dropupPanel!.classList.toggle("ss-dropup--visible", dropupVisible);
 
   if (dropupVisible) {
+    // The previous shell exited (e.g. the user typed `exit`): start a fresh
+    // one instead of leaving a dead terminal that can never be revived.
+    if (!dropupBackendId && !dropupStarting) startDropupSession(sdk);
     setTimeout(() => {
-      dropupFitAddon?.fit();
+      fitDropup();
       dropupTerminal?.focus();
-      if (dropupBackendId && dropupTerminal) {
-        sdk.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
-      }
     }, 200);
   }
+}
+
+function startDropupSession(sdk: CaidoSDK): void {
+  dropupStarting = true;
+  // Create backend session (use global default directory)
+  resolveWorkingDirectory(sdk).then((dir) => {
+    return sdk.backend.createTerminal(dir, "", "Shell");
+  }).then((id) => {
+    dropupBackendId = id;
+    for (const data of dropupPendingInput) quiet(sdk.backend.writeTerminal(id, data));
+    dropupPendingInput = [];
+    fitDropup();
+  }).catch(() => {
+    dropupPendingInput = [];
+    dropupTerminal?.writeln("\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m");
+  }).finally(() => {
+    dropupStarting = false;
+  });
 }
 
 function createDropupPanel(sdk: CaidoSDK): void {
@@ -1031,18 +1070,11 @@ function createDropupPanel(sdk: CaidoSDK): void {
   dropupTerminal.loadAddon(dropupFitAddon);
   dropupTerminal.open(termContainer);
 
-  // Create backend session (use global default directory)
-  resolveWorkingDirectory(sdk).then((dir) => {
-    return sdk.backend.createTerminal(dir, "", "Shell");
-  }).then((id) => {
-    dropupBackendId = id;
-  }).catch(() => {
-    dropupTerminal?.writeln("\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m");
-  });
-
   dropupTerminal.onData((data) => {
     if (dropupBackendId) {
-      sdk.backend.writeTerminal(dropupBackendId, data);
+      quiet(sdk.backend.writeTerminal(dropupBackendId, data));
+    } else if (dropupStarting) {
+      dropupPendingInput.push(data);
     }
   });
 
@@ -1056,7 +1088,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
 
     sdk.backend.onEvent("terminalExit", (event) => {
       if (event.terminalId === dropupBackendId && dropupTerminal) {
-        dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
+        dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code} — reopen to start a new shell]\x1b[0m`);
         dropupBackendId = null;
       }
     });
@@ -1064,14 +1096,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
   }
 
   // Resize observer
-  const ro = new ResizeObserver(() => {
-    if (dropupVisible && dropupFitAddon) {
-      dropupFitAddon.fit();
-      if (dropupBackendId && dropupTerminal) {
-        sdk.backend.resizeTerminal(dropupBackendId, dropupTerminal.cols, dropupTerminal.rows);
-      }
-    }
-  });
+  const ro = new ResizeObserver(() => fitDropup());
   ro.observe(termContainer);
 }
 

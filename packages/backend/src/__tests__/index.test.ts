@@ -4,15 +4,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("caido:plugin", () => ({}));
 
-vi.mock("../utils", () => ({
-  pathExists: vi.fn(),
-  isDirectory: vi.fn(),
-  loadSettings: vi.fn(),
-  saveSettings: vi.fn(),
-  findPython3: vi.fn(),
-  getDefaultShell: vi.fn(),
-  frameSend: vi.fn(),
-}));
+vi.mock("../utils", async () => {
+  const actual = await vi.importActual<typeof import("../utils")>("../utils");
+  return {
+    pathExists: vi.fn(),
+    isDirectory: vi.fn(),
+    loadSettings: vi.fn(),
+    saveSettings: vi.fn(),
+    findPython3: vi.fn(),
+    getDefaultShell: vi.fn(),
+    frameSend: vi.fn(),
+    writeFileAtomic: vi.fn(),
+    splitUtf8Tail: actual.splitUtf8Tail,
+  };
+});
 
 vi.mock("child_process", () => ({
   spawn: vi.fn(),
@@ -23,7 +28,6 @@ vi.mock("net", () => ({
 }));
 
 vi.mock("fs", () => ({
-  writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
 }));
 
@@ -44,11 +48,15 @@ import {
   findPython3,
   getDefaultShell,
   frameSend,
+  writeFileAtomic,
 } from "../utils";
 import { spawn } from "child_process";
 import { connect } from "net";
 
 // --- Helpers ---
+
+const TOKEN = "deadbeef";
+const READY = `READY:18500:${TOKEN}\n`;
 
 type Handler = (...args: any[]) => any;
 
@@ -304,8 +312,7 @@ describe("Backend API handlers", () => {
     it("should spawn a python process with relay script", () => {
       handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       expect(spawn).toHaveBeenCalledWith("/usr/bin/python3", [
-        "/tmp/shadowshell/relay.py",
-        expect.stringMatching(/^\d+$/),
+        "/home/testuser/.config/shadowshell/relay.py",
         "/bin/zsh",
         "/home",
       ]);
@@ -314,8 +321,7 @@ describe("Backend API handlers", () => {
     it("should fall back to home directory when no cwd provided", () => {
       handlers.get("createTerminal")!(sdk, "", "", "shell");
       expect(spawn).toHaveBeenCalledWith("/usr/bin/python3", [
-        "/tmp/shadowshell/relay.py",
-        expect.stringMatching(/^\d+$/),
+        "/home/testuser/.config/shadowshell/relay.py",
         "/bin/zsh",
         "/home/testuser",
       ]);
@@ -349,9 +355,10 @@ describe("Backend API handlers", () => {
       );
     });
 
-    it("should return false when session has no socket", () => {
+    it("should queue input while the relay is still connecting", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      expect(handlers.get("writeTerminal")!(sdk, id, "data")).toBe(false);
+      expect(handlers.get("writeTerminal")!(sdk, id, "data")).toBe(true);
+      expect(frameSend).not.toHaveBeenCalled();
     });
   });
 
@@ -362,9 +369,10 @@ describe("Backend API handlers", () => {
       ).toBe(false);
     });
 
-    it("should return false when session has no socket", () => {
+    it("should remember the size while the relay is still connecting", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      expect(handlers.get("resizeTerminal")!(sdk, id, 120, 40)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, 120, 40)).toBe(true);
+      expect(frameSend).not.toHaveBeenCalled();
     });
   });
 
@@ -562,28 +570,6 @@ describe("Backend API handlers", () => {
     });
   });
 
-  describe("port allocation", () => {
-    it("should use sequential ports for new terminals", () => {
-      handlers.get("createTerminal")!(sdk, "/a", "", "s");
-      handlers.get("createTerminal")!(sdk, "/b", "", "s");
-
-      const calls = vi.mocked(spawn).mock.calls;
-      const args1 = calls[calls.length - 2]?.[1] as string[];
-      const args2 = calls[calls.length - 1]?.[1] as string[];
-      const port1 = parseInt(args1![1]!, 10);
-      const port2 = parseInt(args2![1]!, 10);
-      expect(port2).toBe(port1 + 1);
-    });
-
-    it("should allocate port within valid TCP range", () => {
-      handlers.get("createTerminal")!(sdk, "/a", "", "s");
-      const args = vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[];
-      const port = parseInt(args[1]!, 10);
-      expect(port).toBeGreaterThanOrEqual(18500);
-      expect(port).toBeLessThanOrEqual(32767);
-    });
-  });
-
   describe("READY signal and socket connection", () => {
     it("should connect via TCP when stdout emits READY", () => {
       const mockSocket = createMockSocket();
@@ -593,7 +579,7 @@ describe("Backend API handlers", () => {
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
 
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       expect(connect).toHaveBeenCalledWith(
         expect.any(Number),
         "127.0.0.1",
@@ -620,7 +606,7 @@ describe("Backend API handlers", () => {
 
       stdoutHandler!(Buffer.from("REA"));
       expect(connect).not.toHaveBeenCalled();
-      stdoutHandler!(Buffer.from("DY:18500\n"));
+      stdoutHandler!(Buffer.from(`DY:18500:${TOKEN}\n`));
       expect(connect).toHaveBeenCalledOnce();
     });
 
@@ -635,7 +621,7 @@ describe("Backend API handlers", () => {
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
 
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       expect(connect).toHaveBeenCalledOnce();
 
       // Simulate further stdout from the relay (e.g., diagnostic prints).
@@ -652,7 +638,7 @@ describe("Backend API handlers", () => {
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
 
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       flush();
       expect(frameSend).toHaveBeenCalledWith(
         mockSocket,
@@ -670,7 +656,7 @@ describe("Backend API handlers", () => {
         const proc = lastSpawnedProc();
         const stdoutHandler = getStdoutHandler(proc);
 
-        stdoutHandler!(Buffer.from("READY:18500\n"));
+        stdoutHandler!(Buffer.from(READY));
         flush();
         // Initial resize was sent, but command frame is deferred
         const callsBefore = vi.mocked(frameSend).mock.calls.length;
@@ -695,7 +681,7 @@ describe("Backend API handlers", () => {
         const proc = lastSpawnedProc();
         const stdoutHandler = getStdoutHandler(proc);
 
-        stdoutHandler!(Buffer.from("READY:18500\n"));
+        stdoutHandler!(Buffer.from(READY));
         flush();
         const callsAfterReady = vi.mocked(frameSend).mock.calls.length;
 
@@ -717,7 +703,7 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       flush();
 
       const dataHandler = getSocketHandler(mockSocket, "data");
@@ -737,7 +723,7 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       flush();
 
       // Sanity: after connect, writeTerminal succeeds
@@ -757,7 +743,7 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       flush();
 
       const errorHandler = getSocketHandler(mockSocket, "error");
@@ -776,7 +762,7 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
 
       // Terminal destroyed before the connect callback fires
       handlers.get("destroyTerminal")!(sdk, id);
@@ -794,7 +780,7 @@ describe("Backend API handlers", () => {
 
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
 
       expect(connect).not.toHaveBeenCalled();
     });
@@ -808,7 +794,7 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from("READY:18500\n"));
+      stdoutHandler!(Buffer.from(READY));
       flush();
       return { id, socket: mockSocket };
     }
@@ -884,48 +870,184 @@ describe("Backend API handlers", () => {
     });
   });
 
-  describe("port allocation collision avoidance", () => {
-    it("should skip ports held by live sessions", () => {
-      // Hold a port (the first allocation); the second call must pick a
-      // different port even though both are sequential allocations from the
-      // same counter. We can't easily force a wrap-around in a single test,
-      // but uniqueness across live sessions covers the regression intent.
-      handlers.get("createTerminal")!(sdk, "/a", "", "s");
-      handlers.get("createTerminal")!(sdk, "/b", "", "s");
-      handlers.get("createTerminal")!(sdk, "/c", "", "s");
+  describe("relay handshake and pre-connect buffering", () => {
+    function startTerminal(command = "") {
+      const mockSocket = createMockSocket();
+      const flush = deferredConnect(mockSocket);
+      const id = handlers.get("createTerminal")!(sdk, "/home", command, "shell");
+      const stdoutHandler = getStdoutHandler(lastSpawnedProc());
+      return { id, mockSocket, flush, stdoutHandler };
+    }
 
-      const ports = vi.mocked(spawn).mock.calls.map(
-        (c) => parseInt((c[1] as string[])[1]!, 10)
+    it("should connect to the port reported by the relay", () => {
+      const { stdoutHandler } = startTerminal();
+      stdoutHandler!(Buffer.from(`READY:41234:${TOKEN}\n`));
+      expect(connect).toHaveBeenCalledWith(41234, "127.0.0.1", expect.any(Function));
+    });
+
+    it("should not connect until the full READY line (with token) has arrived", () => {
+      const { stdoutHandler } = startTerminal();
+      stdoutHandler!(Buffer.from("READY:41234:dead"));
+      expect(connect).not.toHaveBeenCalled();
+      stdoutHandler!(Buffer.from("beef\n"));
+      expect(connect).toHaveBeenCalledOnce();
+    });
+
+    it("should send the auth frame before anything else", () => {
+      const { stdoutHandler, flush, mockSocket } = startTerminal();
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      expect(vi.mocked(frameSend).mock.calls[0]).toEqual([
+        mockSocket,
+        { type: "auth", token: TOKEN },
+      ]);
+    });
+
+    it("should apply a resize requested before the socket connected", () => {
+      const { id, stdoutHandler, flush, mockSocket } = startTerminal();
+      handlers.get("resizeTerminal")!(sdk, id, 132, 43);
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      expect(frameSend).toHaveBeenCalledWith(mockSocket, { type: "resize", cols: 132, rows: 43 });
+      expect(frameSend).not.toHaveBeenCalledWith(
+        mockSocket,
+        expect.objectContaining({ type: "resize", cols: 80, rows: 24 })
       );
-      expect(new Set(ports).size).toBe(ports.length); // all unique
-      for (const p of ports) {
-        expect(p).toBeGreaterThanOrEqual(18500);
-        expect(p).toBeLessThanOrEqual(32767);
+    });
+
+    it("should flush input typed before the socket connected, in order", () => {
+      const { id, stdoutHandler, flush, mockSocket } = startTerminal();
+      handlers.get("writeTerminal")!(sdk, id, "l");
+      handlers.get("writeTerminal")!(sdk, id, "s\r");
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      const inputs = vi.mocked(frameSend).mock.calls
+        .filter(([sock, msg]) => (sock as unknown) === mockSocket && msg.type === "input")
+        .map(([, msg]) => msg.data);
+      expect(inputs).toEqual(["l", "s\r"]);
+    });
+
+    it("should not queue unbounded input before connecting", () => {
+      const { id } = startTerminal();
+      const big = "x".repeat(1024 * 1024);
+      expect(handlers.get("writeTerminal")!(sdk, id, big)).toBe(true);
+      expect(handlers.get("writeTerminal")!(sdk, id, "y")).toBe(false);
+    });
+
+    it("should reassemble UTF-8 characters split across socket chunks", () => {
+      const { id, stdoutHandler, flush, mockSocket } = startTerminal();
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      const dataHandler = getSocketHandler(mockSocket, "data")!;
+      const bytes = Buffer.from("한글✓", "utf-8");
+      dataHandler(bytes.subarray(0, 4));
+      dataHandler(bytes.subarray(4, 8));
+      dataHandler(bytes.subarray(8));
+      const text = vi.mocked(sdk.api.send).mock.calls
+        .filter(([name, ev]) => name === "terminalOutput" && ev.terminalId === id)
+        .map(([, ev]) => ev.data)
+        .join("");
+      expect(text).toBe("한글✓");
+    });
+
+    it("should report terminalExit when the relay fails to spawn (error without exit)", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      getProcHandler(proc, "error")!(new Error("ENOENT"));
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", { terminalId: id, code: -1 });
+    });
+
+    it("should report terminalExit only once when both error and exit fire", () => {
+      handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      getProcHandler(proc, "error")!(new Error("boom"));
+      getProcHandler(proc, "exit")!(1);
+      const exits = vi.mocked(sdk.api.send).mock.calls.filter(([name]) => name === "terminalExit");
+      expect(exits).toHaveLength(1);
+    });
+
+    it("should write the relay script exactly once, atomically", async () => {
+      // relayScriptPath is module state; load a fresh copy of the module.
+      vi.resetModules();
+      const fresh = await import("../index");
+      const freshSdk = createMockSdk();
+      fresh.init(freshSdk as any);
+      vi.mocked(writeFileAtomic).mockClear();
+      const create = freshSdk._handlers.get("createTerminal")!;
+      create(freshSdk, "/a", "", "s");
+      create(freshSdk, "/b", "", "s");
+      expect(writeFileAtomic).toHaveBeenCalledTimes(1);
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        "/home/testuser/.config/shadowshell/relay.py",
+        expect.stringContaining("ShadowShell PTY relay")
+      );
+      freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
+    });
+
+    it("should fall back to the temp directory when the config dir is unwritable", async () => {
+      vi.resetModules();
+      const fresh = await import("../index");
+      const freshSdk = createMockSdk();
+      fresh.init(freshSdk as any);
+      vi.mocked(writeFileAtomic).mockReset();
+      vi.mocked(writeFileAtomic).mockImplementationOnce(() => {
+        throw new Error("EACCES");
+      });
+      freshSdk._handlers.get("createTerminal")!(freshSdk, "/a", "", "s");
+      expect(spawn).toHaveBeenLastCalledWith("/usr/bin/python3", [
+        "/tmp/shadowshell/relay.py",
+        "/bin/zsh",
+        "/a",
+      ]);
+      freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
+    });
+
+    it("should stop the relay immediately on socket error", () => {
+      const { stdoutHandler, flush, mockSocket } = startTerminal();
+      const proc = lastSpawnedProc();
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      getSocketHandler(mockSocket, "error")!(new Error("ECONNREFUSED"));
+      expect(proc.kill).toHaveBeenCalled();
+    });
+
+    it("should stop the relay after socket close only if it does not exit on its own", () => {
+      vi.useFakeTimers();
+      try {
+        for (const exitsOnItsOwn of [true, false]) {
+          const { stdoutHandler, flush, mockSocket } = startTerminal();
+          const proc = lastSpawnedProc();
+          stdoutHandler!(Buffer.from(READY));
+          flush();
+          getSocketHandler(mockSocket, "close")!();
+          expect(proc.kill).not.toHaveBeenCalled();
+          if (exitsOnItsOwn) getProcHandler(proc, "exit")!(0);
+          vi.advanceTimersByTime(2500);
+          expect(proc.kill).toHaveBeenCalledTimes(exitsOnItsOwn ? 0 : 1);
+        }
+      } finally {
+        vi.useRealTimers();
       }
     });
 
-    it("should reuse a freed port for a later session", () => {
-      const id = handlers.get("createTerminal")!(sdk, "/a", "", "s");
-      const firstPort = parseInt(
-        (vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[])[1]!,
-        10
-      );
+    it("should emit a dangling partial UTF-8 sequence when the socket closes", () => {
+      const { id, stdoutHandler, flush, mockSocket } = startTerminal();
+      stdoutHandler!(Buffer.from(READY));
+      flush();
+      getSocketHandler(mockSocket, "data")!(Buffer.from([0x61, 0xe2]));
+      getSocketHandler(mockSocket, "close")!();
+      const text = vi.mocked(sdk.api.send).mock.calls
+        .filter(([name, ev]) => name === "terminalOutput" && ev.terminalId === id)
+        .map(([, ev]) => ev.data)
+        .join("");
+      expect(text).toBe("a\uFFFD");
+    });
 
-      handlers.get("destroyTerminal")!(sdk, id);
-      vi.mocked(spawn).mockClear();
-
-      // After destroy, the freed port is available again. The rolling counter
-      // marches forward, so the next session gets the next sequential port —
-      // but if the counter ever wraps, the freed port is reusable. Sanity:
-      // creating another session does not crash and is within range.
-      handlers.get("createTerminal")!(sdk, "/b", "", "s");
-      const nextPort = parseInt(
-        (vi.mocked(spawn).mock.calls.at(-1)?.[1] as string[])[1]!,
-        10
-      );
-      expect(nextPort).not.toBe(firstPort); // counter advanced
-      expect(nextPort).toBeGreaterThanOrEqual(18500);
-      expect(nextPort).toBeLessThanOrEqual(32767);
+    it("should reject sizes that floor to zero", () => {
+      const { id } = startTerminal();
+      expect(handlers.get("resizeTerminal")!(sdk, id, 0.5, 40)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, 80, 0.9)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, 80.7, 24.2)).toBe(true);
     });
   });
 });
