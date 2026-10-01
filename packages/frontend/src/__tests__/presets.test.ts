@@ -81,6 +81,20 @@ describe("presets", () => {
       store["shadowshell-preset-overrides"] = "not-json{{{";
       expect(loadOverrides()).toEqual({});
     });
+
+    it("should ignore well-formed JSON of the wrong shape", () => {
+      for (const bad of ["null", "[]", "42", '"str"']) {
+        store["shadowshell-preset-overrides"] = bad;
+        expect(loadOverrides()).toEqual({});
+      }
+      store["shadowshell-preset-overrides"] = '{"claude":null,"gemini":{"command":"g"}}';
+      expect(loadOverrides()).toEqual({ gemini: { command: "g" } });
+    });
+
+    it("should not crash getAllPresets when overrides are null", () => {
+      store["shadowshell-preset-overrides"] = "null";
+      expect(getAllPresets()).toHaveLength(BUILTIN_PRESETS.length);
+    });
   });
 
   describe("loadCustomPresets / saveCustomPresets", () => {
@@ -107,6 +121,14 @@ describe("presets", () => {
     it("should return empty array on invalid JSON", () => {
       store["shadowshell-custom-presets"] = "{broken";
       expect(loadCustomPresets()).toEqual([]);
+    });
+
+    it("should ignore non-array JSON and malformed entries", () => {
+      store["shadowshell-custom-presets"] = '{"id":"x"}';
+      expect(loadCustomPresets()).toEqual([]);
+      store["shadowshell-custom-presets"] = '[null, 1, {"id":"a"}, {"id":"b","name":"B"}]';
+      expect(loadCustomPresets().map((p) => p.id)).toEqual(["b"]);
+      expect(() => getAllPresets()).not.toThrow();
     });
   });
 

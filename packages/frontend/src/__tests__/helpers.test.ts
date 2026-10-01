@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect } from "vitest";
-import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon } from "../helpers";
+import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon, toColorInputValue } from "../helpers";
 import { ICONS } from "../presets";
 
 describe("escapeHtml", () => {
@@ -279,5 +279,26 @@ describe("sanitizeSvgIcon", () => {
   it("should accept complex valid SVG with paths and transforms", () => {
     const valid = '<svg width="14" height="14" viewBox="0 0 14 14"><g transform="translate(1,1)"><path d="M0 0L12 0L12 12L0 12Z" stroke="currentColor" fill="none"/><circle cx="6" cy="6" r="3" fill="currentColor"/></g></svg>';
     expect(sanitizeSvgIcon(valid)).toBe(valid);
+  });
+});
+
+describe("toColorInputValue", () => {
+  it("passes #rrggbb through (lowercased)", () => {
+    expect(toColorInputValue("#D97706")).toBe("#d97706");
+  });
+
+  it("expands #rgb and #rgba", () => {
+    expect(toColorInputValue("#abc")).toBe("#aabbcc");
+    expect(toColorInputValue("#abcf")).toBe("#aabbcc");
+  });
+
+  it("drops the alpha channel of #rrggbbaa", () => {
+    expect(toColorInputValue("#6b7280ff")).toBe("#6b7280");
+  });
+
+  it("falls back to the default for invalid or odd-length values", () => {
+    expect(toColorInputValue("red")).toBe("#6b7280");
+    expect(toColorInputValue("#12345")).toBe("#6b7280");
+    expect(toColorInputValue("")).toBe("#6b7280");
   });
 });

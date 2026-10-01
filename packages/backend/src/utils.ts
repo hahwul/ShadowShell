@@ -35,13 +35,17 @@ export function saveSettings(
   settingsFile: string,
   settings: Record<string, unknown>
 ): void {
-  if (!pathExists(settingsDir)) mkdirSync(settingsDir, { recursive: true });
-  // Atomic write: write to a temp file, then rename. Avoids a torn settings.json
-  // if the process crashes or is killed mid-write.
-  const tmp = `${settingsFile}.tmp-${process.pid}-${Date.now()}`;
+  if (!pathExists(settingsDir)) mkdirSync(settingsDir, { recursive: true, mode: 0o700 });
+  writeFileAtomic(settingsFile, JSON.stringify(settings, null, 2));
+}
+
+// Atomic write: write to a temp file, then rename. Avoids a torn file if the
+// process crashes mid-write, and readers never observe a truncated file.
+export function writeFileAtomic(file: string, content: string, mode = 0o600): void {
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
   try {
-    writeFileSync(tmp, JSON.stringify(settings, null, 2));
-    renameSync(tmp, settingsFile);
+    writeFileSync(tmp, content, { mode });
+    renameSync(tmp, file);
   } catch (err) {
     try { unlinkSync(tmp); } catch { /* ignore */ }
     throw err;
@@ -92,30 +96,18 @@ export function frameSend(
   }
 }
 
-export function nextPortInRange(current: number, max: number, min: number): number {
-  return current > max ? min : current;
-}
-
-// Pick the next port in [min, max] that is not in `used`, starting from `current`.
-// `next` is the value to assign back to the rolling counter so the following
-// allocation continues sequentially. If every port in range is in use, returns
-// the requested port anyway (caller will see a bind failure rather than us
-// silently looping forever).
-export function allocatePort(
-  current: number,
-  min: number,
-  max: number,
-  used: Set<number>
-): { port: number; next: number } {
-  const span = max - min + 1;
-  let p = current;
-  if (p < min || p > max) p = min;
-  for (let i = 0; i < span; i++) {
-    if (!used.has(p)) {
-      const next = p + 1 > max ? min : p + 1;
-      return { port: p, next };
-    }
-    p = p + 1 > max ? min : p + 1;
+// Splits `buf` into a prefix that ends on a UTF-8 character boundary and the
+// trailing bytes of an incomplete multi-byte sequence. Callers carry the tail
+// over to the next chunk so characters straddling TCP reads are not decoded
+// as U+FFFD.
+export function splitUtf8Tail(buf: Buffer): [Buffer, Buffer] {
+  const start = Math.max(0, buf.length - 3);
+  for (let i = buf.length - 1; i >= start; i--) {
+    const b = buf[i]!;
+    if ((b & 0xc0) === 0x80) continue; // continuation byte
+    const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+    if (i + need > buf.length) return [buf.subarray(0, i), buf.subarray(i)];
+    break;
   }
-  return { port: p, next: p + 1 > max ? min : p + 1 };
+  return [buf, buf.subarray(buf.length)];
 }
