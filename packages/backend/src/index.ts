@@ -38,6 +38,16 @@ def log(msg):
 
 child_pid = None
 master_fd = None
+exit_code = 0
+
+def note_exit(status):
+    # Exit with the shell's status so the UI reports "exit 3" as code 3 (and a
+    # signal as 128+n, like a shell does) instead of the relay's own 0.
+    global exit_code
+    if os.WIFEXITED(status):
+        exit_code = os.WEXITSTATUS(status)
+    elif os.WIFSIGNALED(status):
+        exit_code = 128 + os.WTERMSIG(status)
 
 def create_pty():
     global child_pid, master_fd
@@ -287,6 +297,7 @@ def run():
                 child_pid = None
                 break
             if pid != 0:
+                note_exit(status)
                 # Reaped: forget the pid so cleanup() never signals a pid the
                 # kernel may already have recycled.
                 child_pid = None
@@ -321,15 +332,16 @@ def reap(pid):
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         try:
-            done, _ = os.waitpid(pid, os.WNOHANG)
+            done, status = os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
             return
         if done:
+            note_exit(status)
             return
         time.sleep(0.02)
     try:
         os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
+        note_exit(os.waitpid(pid, 0)[1])
     except OSError:
         pass
 
@@ -355,6 +367,7 @@ signal.signal(signal.SIGHUP, handle_signal)
 
 if __name__ == "__main__":
     run()
+    sys.exit(exit_code)
 `;
 
 // --- Types ---

@@ -642,7 +642,7 @@ function buildToolbar(sdk: CaidoSDK): HTMLDivElement {
     { icon: TB.splitH, title: "Split horizontally (side by side)", action: () => splitPane(sdk, "horizontal") },
     { icon: TB.splitV, title: "Split vertically (top / bottom)", action: () => splitPane(sdk, "vertical") },
     { icon: TB.closePane, title: "Close active pane", action: () => closePane(sdk), separator: true },
-    { icon: TB.search, title: "Search (Ctrl+Shift+F)", action: toggleSearch, separator: true },
+    { icon: TB.search, title: "Search", action: toggleSearch, separator: true },
     { icon: TB.fontUp, title: "Increase font size", action: () => changeFontSize(1) },
     { icon: TB.fontDown, title: "Decrease font size", action: () => changeFontSize(-1) },
     { icon: TB.clear, title: "Clear terminal", action: () => { getActivePane()?.terminal.clear(); }, separator: true },
@@ -873,8 +873,6 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
 // --- Settings Modal ---
 
 async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
-  document.querySelector(".ss-modal-overlay")?.remove();
-
   let currentPythonPath = "";
   let currentDefaultDir = "";
   try {
@@ -883,6 +881,9 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   try {
     currentDefaultDir = await sdk.backend.getDefaultDirectory();
   } catch { /* ignore */ }
+  // Only after the awaits: a second click while the first call is still
+  // loading would otherwise remove nothing and stack a second modal.
+  document.querySelector(".ss-modal-overlay")?.remove();
 
   const overlay = document.createElement("div");
   overlay.className = "ss-modal-overlay";

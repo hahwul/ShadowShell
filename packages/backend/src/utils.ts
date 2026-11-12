@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, rmSync } from "fs";
 import { platform } from "os";
 import type { Socket } from "net";
 
@@ -42,12 +42,13 @@ export function saveSettings(
 // Atomic write: write to a temp file, then rename. Avoids a torn file if the
 // process crashes mid-write, and readers never observe a truncated file.
 export function writeFileAtomic(file: string, content: string, mode = 0o600): void {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  // No pid: Caido's backend runtime has no global `process`.
+  const tmp = `${file}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     writeFileSync(tmp, content, { mode });
     renameSync(tmp, file);
   } catch (err) {
-    try { unlinkSync(tmp); } catch { /* ignore */ }
+    try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
     throw err;
   }
 }
