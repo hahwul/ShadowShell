@@ -74,7 +74,7 @@ export const BUILTIN_PRESETS: Preset[] = [
     name: "Shell",
     icon: ICONS.terminal,
     command: "",
-    description: "Default shell",
+    description: "Your login shell",
     color: "#6b7280",
     builtin: true,
   },

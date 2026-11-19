@@ -243,6 +243,25 @@ describe("Frontend UI", () => {
       expect(sdk.backend.setPythonPath).toHaveBeenCalledWith("");
     });
 
+    it("should not save the directory if cancelled while the Python path is saved", async () => {
+      let saved!: (ok: boolean) => void;
+      sdk.backend.setPythonPath.mockReturnValueOnce(
+        new Promise((r) => {
+          saved = r;
+        }),
+      );
+      await openSettings();
+      field("pythonPath").value = "/opt/python3";
+      field("defaultDirectory").value = "/work";
+      $("[data-action=save]").click();
+      await vi.advanceTimersByTimeAsync(0);
+      $("[data-action=cancel]").click();
+      saved(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sdk.backend.setDefaultDirectory).not.toHaveBeenCalled();
+    });
+
     it("should drop the error of a field that was fixed and not save if cancelled meanwhile", async () => {
       sdk.backend.validateDirectory.mockResolvedValueOnce(false);
       await openSettings();

@@ -444,6 +444,7 @@ const RELAY_EXIT_GRACE_MS = 2000;
 // stderr can trail the exit of a relay that failed to start.
 const RELAY_STDERR_GRACE_MS = 100;
 const RELAY_STDERR_TAIL = 500;
+const MAX_OUTPUT_EVENT = 256 * 1024; // UTF-16 code units per output event
 
 function loadSettings(): { pythonPath?: string; defaultDirectory?: string } {
   return _loadSettings(SETTINGS_FILE);
@@ -553,6 +554,8 @@ function createTerminal(
   const queueOutput = (data: string) => {
     if (pendingOutput === "") setTimeout(flushOutput, 0);
     pendingOutput += data;
+    // ponytail: size cap guessed; keeps one event well below any transport limit
+    if (pendingOutput.length >= MAX_OUTPUT_EVENT) flushOutput();
   };
 
   let stdoutBuf = "";
@@ -674,7 +677,13 @@ function createTerminal(
     if (failedToStart()) {
       const reason =
         spawnError ?? (stderrTail.trim() || `exited with code ${code}`);
-      event.error = `${python}: ${reason}`;
+      // Shown in a terminal: drop control characters (escape sequences in
+      // stderr would be interpreted), keep line breaks
+      event.error = Array.from(`${python}: ${reason}`, (c) => {
+        const n = c.charCodeAt(0);
+        const control = n < 0x20 || (n >= 0x7f && n < 0xa0);
+        return control && c !== "\n" ? "" : c;
+      }).join("");
     }
     sdk.api.send("terminalExit", event);
   };

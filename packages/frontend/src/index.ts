@@ -1314,6 +1314,8 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
           );
           return;
         }
+        // Cancelled while the Python path was being saved
+        if (!overlay.isConnected) return;
         if (!(await sdk.backend.setDefaultDirectory(defaultDirectory))) {
           rejectDirectory();
           return;

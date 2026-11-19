@@ -81,11 +81,21 @@ export function findPython3(
   const saved = loadSettings(settingsFile).pythonPath;
   if (typeof saved === "string" && saved !== "" && pathExists(saved))
     return saved;
-  for (const p of [
-    "/usr/bin/python3",
-    "/usr/local/bin/python3",
-    "/opt/homebrew/bin/python3",
-  ]) {
+  // On macOS /usr/bin/python3 is only a stub until the Command Line Tools
+  // are installed, so a Homebrew or python.org Python is preferred there.
+  const candidates =
+    platform() === "darwin"
+      ? [
+          "/opt/homebrew/bin/python3",
+          "/usr/local/bin/python3",
+          "/usr/bin/python3",
+        ]
+      : [
+          "/usr/bin/python3",
+          "/usr/local/bin/python3",
+          "/opt/homebrew/bin/python3",
+        ];
+  for (const p of candidates) {
     if (pathExists(p)) return p;
   }
   return "/usr/bin/python3";

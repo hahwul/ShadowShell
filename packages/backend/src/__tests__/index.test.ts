@@ -711,6 +711,29 @@ describe("Backend API handlers", () => {
       }
     });
 
+    it("should split output that piles up within one tick into bounded events", () => {
+      vi.useFakeTimers();
+      try {
+        const mockSocket = createMockSocket();
+        const flush = deferredConnect(mockSocket);
+        const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+        getStdoutHandler(lastSpawnedProc())!(Buffer.from(READY));
+        flush();
+        const dataHandler = getSocketHandler(mockSocket, "data")!;
+        for (let i = 0; i < 6; i++) dataHandler(Buffer.alloc(64 * 1024, 0x61));
+        vi.advanceTimersByTime(0);
+        const sizes = vi
+          .mocked(sdk.api.send)
+          .mock.calls.filter(
+            ([n, ev]) => n === "terminalOutput" && ev.terminalId === id,
+          )
+          .map(([, ev]) => (ev as { data: string }).data.length);
+        expect(sizes).toEqual([256 * 1024, 128 * 1024]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("should forward socket data as one terminalOutput event per tick, before the exit", () => {
       vi.useFakeTimers();
       try {
@@ -1036,6 +1059,24 @@ describe("Backend API handlers", () => {
           code: 1,
           error:
             "/usr/bin/python3: xcode-select: note: No developer tools were found",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should strip control characters from the start error shown in the terminal", () => {
+      vi.useFakeTimers();
+      try {
+        const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+        const proc = lastSpawnedProc();
+        getProcHandler(proc, "exit")!(1);
+        getStderrHandler(proc)!(Buffer.from("bad\x1b]0;title\x07\r\nline2\n"));
+        vi.advanceTimersByTime(100);
+        expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+          terminalId: id,
+          code: 1,
+          error: "/usr/bin/python3: bad]0;title\nline2",
         });
       } finally {
         vi.useRealTimers();
