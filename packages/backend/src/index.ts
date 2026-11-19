@@ -427,7 +427,7 @@ function saveSettings(settings: Record<string, unknown>): void {
 }
 
 function findPython3Local(): string {
-  if (pythonPath) return pythonPath;
+  if (pythonPath !== null && pythonPath !== "") return pythonPath;
   const result = _findPython3(null, SETTINGS_FILE);
   pythonPath = result;
   return result;
@@ -443,7 +443,12 @@ function ensureRelayScript(): string {
   // truncated script. Prefer the user's private config directory over a shared
   // temp directory another local user could tamper with; fall back to the temp
   // directory when HOME is missing or read-only so terminals still work.
-  if (relayScriptPath && pathExists(relayScriptPath)) return relayScriptPath;
+  if (
+    relayScriptPath !== null &&
+    relayScriptPath !== "" &&
+    pathExists(relayScriptPath)
+  )
+    return relayScriptPath;
   let lastError: unknown;
   for (const useTemp of [false, true]) {
     try {
@@ -487,7 +492,11 @@ function createTerminal(
   const workingDir = cwd || home;
   const scriptPath = ensureRelayScript();
 
-  const proc = spawn(findPython3Local(), [scriptPath, shell, workingDir]);
+  const proc: ChildProcess = spawn(findPython3Local(), [
+    scriptPath,
+    shell,
+    workingDir,
+  ]);
 
   const session: TerminalSession = {
     id,
@@ -768,7 +777,7 @@ function setDefaultDirectory(
 
 function getDefaultDirectory(sdk: SDK<API, BackendEvents>): string {
   const settings = loadSettings();
-  return settings.defaultDirectory || "";
+  return settings.defaultDirectory ?? "";
 }
 
 function validateDirectory(

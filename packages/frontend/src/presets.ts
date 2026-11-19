@@ -92,7 +92,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 export function loadOverrides(): Record<string, Partial<Preset>> {
   try {
     const stored = localStorage.getItem(OVERRIDES_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
+    const parsed: unknown =
+      stored !== null && stored !== "" ? JSON.parse(stored) : {};
     if (!isRecord(parsed)) return {};
     const result: Record<string, Partial<Preset>> = {};
     for (const [id, ov] of Object.entries(parsed)) {
@@ -113,7 +114,8 @@ export function saveOverrides(
 export function loadCustomPresets(): Preset[] {
   try {
     const stored = localStorage.getItem(CUSTOM_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    const parsed: unknown =
+      stored !== null && stored !== "" ? JSON.parse(stored) : [];
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (p): p is Preset =>

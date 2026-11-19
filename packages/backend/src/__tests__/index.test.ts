@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("caido:plugin", () => ({}));
 
 vi.mock("../utils", async () => {
-  const actual = await vi.importActual<typeof import("../utils")>("../utils");
+  const actual = await vi.importActual<typeof UtilsModule>("../utils");
   return {
     pathExists: vi.fn(),
     isDirectory: vi.fn(),
@@ -40,6 +40,7 @@ vi.mock("os", () => ({
 // --- Imports ---
 
 import { init } from "../index";
+import type * as UtilsModule from "../utils";
 import {
   findPython3,
   frameSend,

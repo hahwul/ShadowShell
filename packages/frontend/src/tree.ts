@@ -23,7 +23,7 @@ export function findPaneById<P extends PaneBase>(
   node: PaneNode<P>,
   id: string | null,
 ): P | null {
-  if (!id) return null;
+  if (id === null || id === "") return null;
   if (node.type === "leaf") {
     return node.pane.id === id ? node.pane : null;
   }

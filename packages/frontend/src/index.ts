@@ -142,7 +142,8 @@ async function resolveWorkingDirectory(
   sdk: CaidoSDK,
   preset?: Preset | null,
 ): Promise<string> {
-  if (preset?.defaultDirectory) return preset.defaultDirectory;
+  if (preset?.defaultDirectory !== undefined && preset.defaultDirectory !== "")
+    return preset.defaultDirectory;
   try {
     return await sdk.backend.getDefaultDirectory();
   } catch {
@@ -172,7 +173,7 @@ function sendInput(backendId: string, data: string): void {
   if (queued !== undefined) return; // already draining this terminal
   void (async () => {
     let chunk: string | undefined;
-    while ((chunk = queuedInput.get(backendId))) {
+    while ((chunk = queuedInput.get(backendId)) !== undefined && chunk !== "") {
       queuedInput.set(backendId, "");
       // Bounded: one call that never settles must not freeze the terminal.
       await Promise.race([
@@ -218,8 +219,9 @@ function stopTerminalsOnUnload(sdk: CaidoSDK): void {
 
 function destroyLeftoverTerminals(sdk: CaidoSDK): void {
   try {
+    const stored = sessionStorage.getItem(OWNED_TERMINALS_KEY);
     const ids: unknown = JSON.parse(
-      sessionStorage.getItem(OWNED_TERMINALS_KEY) || "[]",
+      stored !== null && stored !== "" ? stored : "[]",
     );
     sessionStorage.removeItem(OWNED_TERMINALS_KEY);
     if (!Array.isArray(ids)) return;
@@ -260,7 +262,7 @@ const syncedSizes = new WeakMap<Terminal, string>();
 const resizing = new Set<string>();
 
 function syncBackendSize(backendId: string | null, terminal: Terminal): void {
-  if (!backendId || resizing.has(backendId)) return;
+  if (backendId === null || backendId === "" || resizing.has(backendId)) return;
   const key = `${backendId}:${terminal.cols}x${terminal.rows}`;
   if (syncedSizes.get(terminal) === key) return;
   syncedSizes.set(terminal, key);
@@ -329,9 +331,9 @@ async function createPane(
   let backendId: string | null = null;
   try {
     backendId = await sdk.backend.createTerminal(
-      cwd || "",
-      command || "",
-      presetName || "",
+      cwd ?? "",
+      command ?? "",
+      presetName ?? "",
     );
   } catch (err) {
     terminal.writeln(
@@ -339,7 +341,7 @@ async function createPane(
     );
   }
 
-  if (backendId) {
+  if (backendId !== null && backendId !== "") {
     const exitCode = claimTerminal(backendId);
     if (exitCode !== undefined) {
       terminal.writeln(`\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`);
@@ -357,7 +359,8 @@ async function createPane(
   };
 
   terminal.onData((data) => {
-    if (pane.backendId) sendInput(pane.backendId, data);
+    if (pane.backendId !== null && pane.backendId !== "")
+      sendInput(pane.backendId, data);
   });
 
   return pane;
@@ -366,7 +369,7 @@ async function createPane(
 // Kills the backend session and releases the xterm instance. Clearing
 // backendId first means late output/exit events no longer match this pane.
 function disposePane(sdk: CaidoSDK, pane: Pane): void {
-  if (pane.backendId) {
+  if (pane.backendId !== null && pane.backendId !== "") {
     quiet(sdk.backend.destroyTerminal(pane.backendId));
     trackTerminal(pane.backendId, false);
     pane.backendId = null;
@@ -485,9 +488,10 @@ async function splitPane(
   const targetId = activePaneId;
   if (!findPaneById(tab.root, targetId)) return;
 
-  const preset = tab.presetId
-    ? getAllPresets().find((p) => p.id === tab.presetId)
-    : null;
+  const preset =
+    tab.presetId !== undefined && tab.presetId !== ""
+      ? getAllPresets().find((p) => p.id === tab.presetId)
+      : null;
   const cwd = await resolveWorkingDirectory(sdk, preset);
 
   let newPane: Pane;
@@ -530,7 +534,10 @@ function closePane(sdk: CaidoSDK, paneId?: string): void {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
-  const pane = findPaneById(tab.root, paneId || activePaneId);
+  const pane = findPaneById(
+    tab.root,
+    paneId !== undefined && paneId !== "" ? paneId : activePaneId,
+  );
   if (!pane) return;
 
   // If this is the only pane, close the tab
@@ -568,7 +575,12 @@ async function createTab(
   preset?: Preset,
 ): Promise<Tab> {
   const id = generateTabId();
-  const tabName = name || preset?.name || `Shell ${tabCounter}`;
+  const tabName =
+    name !== undefined && name !== ""
+      ? name
+      : preset?.name !== undefined && preset.name !== ""
+        ? preset.name
+        : `Shell ${tabCounter}`;
 
   // Stay hidden until registered: switchToTab() only knows about tabs in
   // `tabs`, so a container shown early could overlap another tab if the user
@@ -709,12 +721,14 @@ function renderTabBar(sdk: CaidoSDK): void {
     const tabEl = document.createElement("div");
     tabEl.className = `ss-tab ${tab.id === activeTabId ? "ss-tab--active" : ""}`;
 
-    const preset = tab.presetId
-      ? getAllPresets().find((p) => p.id === tab.presetId)
-      : null;
+    const preset =
+      tab.presetId !== undefined && tab.presetId !== ""
+        ? getAllPresets().find((p) => p.id === tab.presetId)
+        : null;
     const icon = sanitizeSvgIcon(
-      preset?.icon ||
-        `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      preset?.icon !== undefined && preset.icon !== ""
+        ? preset.icon
+        : `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     );
 
     tabEl.innerHTML = `
@@ -772,9 +786,10 @@ function updateStatusBar(sdk: CaidoSDK): void {
     return;
   }
   const paneCount = getAllPanes(tab.root).length;
-  const preset = tab.presetId
-    ? getAllPresets().find((p) => p.id === tab.presetId)
-    : null;
+  const preset =
+    tab.presetId !== undefined && tab.presetId !== ""
+      ? getAllPresets().find((p) => p.id === tab.presetId)
+      : null;
 
   statusBar.innerHTML = `
     <span class="ss-status__item">
@@ -875,7 +890,7 @@ function buildToolbar(sdk: CaidoSDK): HTMLDivElement {
   ];
 
   for (const item of items) {
-    if (item.separator) {
+    if (item.separator === true) {
       const sep = document.createElement("div");
       sep.className = "ss-toolbar__sep";
       bar.appendChild(sep);
@@ -1021,9 +1036,7 @@ function setupEvents(sdk: CaidoSDK): void {
     if (tab) fitAllPanes(tab.root);
   });
 
-  if (terminalArea) {
-    resizeObserver.observe(terminalArea);
-  }
+  resizeObserver.observe(terminalArea);
 }
 
 function findPaneByBackendId(
@@ -1055,11 +1068,11 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
   modal.innerHTML = `
     <div class="ss-modal__header">${escapeHtml(title)}</div>
     <div class="ss-modal__body">
-      <label class="ss-modal__field"><span>Name</span><input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name || "")}" placeholder="My Preset" /></label>
-      <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command || "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
-      <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description || "")}" placeholder="Short description" /></label>
-      <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory || "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
-      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${escapeAttr(toColorInputValue(preset?.color || ""))}" /></label>
+      <label class="ss-modal__field"><span>Name</span><input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name ?? "")}" placeholder="My Preset" /></label>
+      <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command ?? "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
+      <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description ?? "")}" placeholder="Short description" /></label>
+      <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory ?? "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
+      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${escapeAttr(toColorInputValue(preset?.color ?? ""))}" /></label>
     </div>
     <div class="ss-modal__footer">
       ${isBuiltin ? `<button class="ss-modal__btn ss-modal__btn--reset" data-action="reset">Reset to default</button>` : ""}
@@ -1086,7 +1099,7 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
     const action = (e.target as HTMLElement)
       .closest("[data-action]")
       ?.getAttribute("data-action");
-    if (!action) return;
+    if (action === undefined || action === null || action === "") return;
     if (action === "cancel") {
       closeModal();
       return;
@@ -1221,7 +1234,7 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
     const action = (e.target as HTMLElement)
       .closest("[data-action]")
       ?.getAttribute("data-action");
-    if (!action) return;
+    if (action === undefined || action === null || action === "") return;
     if (action === "cancel") {
       closeModal();
       return;
@@ -1246,11 +1259,9 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
             const hint = modal.querySelector(
               "[data-hint=directory]",
             ) as HTMLDivElement;
-            if (hint) {
-              hint.textContent =
-                "Directory not found. Please enter a valid directory path.";
-              hint.classList.add("ss-modal__hint--error");
-            }
+            hint.textContent =
+              "Directory not found. Please enter a valid directory path.";
+            hint.classList.add("ss-modal__hint--error");
             input.focus();
             return;
           }
@@ -1276,11 +1287,9 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
           const hint = modal.querySelector(
             "[data-hint=python]",
           ) as HTMLDivElement;
-          if (hint) {
-            hint.textContent =
-              "Path not found. Please enter a valid Python 3 binary path.";
-            hint.classList.add("ss-modal__hint--error");
-          }
+          hint.textContent =
+            "Path not found. Please enter a valid Python 3 binary path.";
+          hint.classList.add("ss-modal__hint--error");
           input.focus();
           return;
         }
@@ -1325,7 +1334,8 @@ function toggleDropup(sdk: CaidoSDK): void {
   if (dropupVisible) {
     // The previous shell exited (e.g. the user typed `exit`): start a fresh
     // one instead of leaving a dead terminal that can never be revived.
-    if (!dropupBackendId && !dropupStarting) startDropupSession(sdk);
+    if ((dropupBackendId === null || dropupBackendId === "") && !dropupStarting)
+      startDropupSession(sdk);
     setTimeout(() => {
       fitDropup();
       if (dropupVisible) dropupTerminal?.focus();
@@ -1414,7 +1424,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
   dropupTerminal.open(termContainer);
 
   dropupTerminal.onData((data) => {
-    if (dropupBackendId) {
+    if (dropupBackendId !== null && dropupBackendId !== "") {
       sendInput(dropupBackendId, data);
     } else if (dropupStarting) {
       dropupPendingInput.push(data);
@@ -1466,7 +1476,8 @@ export const init = (sdk: CaidoSDK) => {
   sdk.commands.register(Commands.closeTab, {
     name: "ShadowShell: Close Tab",
     run: () => {
-      if (activeTabId) closeTab(sdk, activeTabId);
+      if (activeTabId !== null && activeTabId !== "")
+        closeTab(sdk, activeTabId);
     },
   });
   sdk.commands.register(Commands.togglePanel, {
