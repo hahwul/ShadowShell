@@ -137,6 +137,7 @@ function quiet(promise: Promise<unknown>): void {
 // sent one call at a time per terminal; whatever is typed meanwhile goes out
 // together in the next call.
 const queuedInput = new Map<string, string>();
+const INPUT_CALL_TIMEOUT_MS = 10_000;
 
 function sendInput(backendId: string, data: string): void {
   const queued = queuedInput.get(backendId);
@@ -146,23 +147,37 @@ function sendInput(backendId: string, data: string): void {
     let chunk: string | undefined;
     while ((chunk = queuedInput.get(backendId))) {
       queuedInput.set(backendId, "");
-      try { await sdkRef.backend.writeTerminal(backendId, chunk); } catch { /* backend reloading */ }
+      // Bounded: one call that never settles must not freeze the terminal.
+      await Promise.race([
+        sdkRef.backend.writeTerminal(backendId, chunk).catch(() => { /* backend reloading */ }),
+        new Promise((resolve) => setTimeout(resolve, INPUT_CALL_TIMEOUT_MS)),
+      ]);
     }
     queuedInput.delete(backendId);
   })();
 }
 
-// The backend outlives a page reload but the xterm side does not, so shells
-// from this window's previous load would keep running with nothing attached.
-// sessionStorage is per window and survives a reload: remember ours there and
-// stop the leftovers on the next init.
+// The backend outlives a page unload but the xterm side does not, so the
+// shells of an unloaded page would keep running with nothing attached. On
+// unload we ask the backend to stop them, and since requests made while
+// unloading are often dropped, also leave their ids in sessionStorage (per
+// window, survives a reload) for the next init to finish the job. The list is
+// only written on unload: a duplicated browser tab copies sessionStorage while
+// the original is still alive, and must not find its terminals there.
 const OWNED_TERMINALS_KEY = "shadowshell.terminals";
 const ownedTerminals = new Set<string>();
 
 function trackTerminal(backendId: string, alive: boolean): void {
   if (alive) ownedTerminals.add(backendId);
   else ownedTerminals.delete(backendId);
-  try { sessionStorage.setItem(OWNED_TERMINALS_KEY, JSON.stringify([...ownedTerminals])); } catch { /* storage unavailable */ }
+}
+
+function stopTerminalsOnUnload(sdk: CaidoSDK): void {
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted) return; // kept in the back/forward cache, may come back
+    try { sessionStorage.setItem(OWNED_TERMINALS_KEY, JSON.stringify([...ownedTerminals])); } catch { /* storage unavailable */ }
+    for (const id of ownedTerminals) quiet(sdk.backend.destroyTerminal(id));
+  });
 }
 
 function destroyLeftoverTerminals(sdk: CaidoSDK): void {
@@ -199,12 +214,20 @@ function claimTerminal(backendId: string): number | undefined {
 // don't change cols/rows don't each cost a backend round trip.
 const syncedSizes = new WeakMap<Terminal, string>();
 
+// Like input, resize calls can overtake each other, which would leave the PTY
+// at a stale size: one call per terminal at a time, then re-check.
+const resizing = new Set<string>();
+
 function syncBackendSize(backendId: string | null, terminal: Terminal): void {
-  if (!backendId) return;
+  if (!backendId || resizing.has(backendId)) return;
   const key = `${backendId}:${terminal.cols}x${terminal.rows}`;
   if (syncedSizes.get(terminal) === key) return;
   syncedSizes.set(terminal, key);
-  quiet(sdkRef.backend.resizeTerminal(backendId, terminal.cols, terminal.rows));
+  resizing.add(backendId);
+  sdkRef.backend.resizeTerminal(backendId, terminal.cols, terminal.rows).catch(() => {}).finally(() => {
+    resizing.delete(backendId);
+    syncBackendSize(backendId, terminal);
+  });
 }
 
 // Fits a terminal to its container and pushes the new size to the backend.
@@ -1192,6 +1215,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
 export const init = (sdk: CaidoSDK) => {
   sdkRef = sdk;
   destroyLeftoverTerminals(sdk);
+  stopTerminalsOnUnload(sdk);
   const body = buildUI(sdk);
   renderPresetBar(sdk);
 

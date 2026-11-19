@@ -1003,6 +1003,29 @@ describe("Backend API handlers", () => {
       freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
     });
 
+    it("should use a fresh temp directory for every terminal instead of caching one", async () => {
+      vi.resetModules();
+      const fresh = await import("../index");
+      const freshSdk = createMockSdk();
+      fresh.init(freshSdk as any);
+      vi.mocked(writeFileAtomic).mockReset();
+      vi.mocked(writeFileAtomic).mockImplementation((file: string) => {
+        if (file.startsWith("/home/")) throw new Error("EACCES");
+      });
+      vi.mocked(spawn).mockClear();
+      const create = freshSdk._handlers.get("createTerminal")!;
+      create(freshSdk, "/a", "", "s");
+      create(freshSdk, "/b", "", "s");
+      // A cached path could be removed by a tmp reaper and recreated by
+      // another local user; pathExists (mocked to true) would then trust it.
+      const scripts = vi.mocked(spawn).mock.calls.map((call) => (call[1] as string[])[0]);
+      expect(scripts).toHaveLength(2);
+      expect(scripts[0]).toMatch(/^\/tmp\/shadowshell-[^/]+\/relay\.py$/);
+      expect(scripts[1]).not.toBe(scripts[0]);
+      vi.mocked(writeFileAtomic).mockReset();
+      freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
+    });
+
     it("should never adopt an existing directory in the shared temp dir", async () => {
       vi.resetModules();
       const fresh = await import("../index");

@@ -66,6 +66,7 @@ function createMockSdk() {
 // --- Tests ---
 
 describe("Frontend UI", () => {
+  const resizeObservers: Array<() => void> = [];
   let sdk: ReturnType<typeof createMockSdk>;
   let page: HTMLElement;
 
@@ -90,7 +91,11 @@ describe("Frontend UI", () => {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => store.set(key, value),
     });
-    vi.stubGlobal("ResizeObserver", class { observe() {} });
+    resizeObservers.length = 0;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(notify: () => void) { resizeObservers.push(notify); }
+      observe() {}
+    });
 
     sdk = createMockSdk();
     (await import("../index")).init(sdk as any);
@@ -194,20 +199,92 @@ describe("Frontend UI", () => {
       expect(sdk.backend.writeTerminal.mock.calls).toEqual([["term-1", "a"], ["term-1", "bc"]]);
     });
 
-    it("should stop the shells left over from this window's previous load", async () => {
+    it("should stop this window's shells on unload, and finish the job after a reload", async () => {
       await run("shadowshell.new-tab");
       await run("shadowshell.new-tab");
-      expect(owned()).toEqual(["term-1", "term-2"]);
+      await run("shadowshell.new-tab");
       emit("terminalExit", { terminalId: "term-2", code: 0 });
-      expect(owned()).toEqual(["term-1"]);
+      await run("shadowshell.close-tab"); // the active one: term-3
+      sdk.backend.destroyTerminal.mockClear();
 
-      // Reload: the module state is gone, the backend and sessionStorage are not.
+      window.dispatchEvent(new Event("pagehide"));
+      expect(sdk.backend.destroyTerminal.mock.calls).toEqual([["term-1"]]);
+
+      // Reload: module state is gone; the backend and sessionStorage are not,
+      // and the request made while unloading may never have left.
       vi.resetModules();
       const reloaded = createMockSdk();
       (await import("../index")).init(reloaded as any);
 
       expect(reloaded.backend.destroyTerminal.mock.calls).toEqual([["term-1"]]);
       expect(owned()).toEqual([]);
+    });
+
+    it("should not touch another live tab's shells when the browser tab is duplicated", async () => {
+      await run("shadowshell.new-tab");
+
+      // A duplicate copies sessionStorage while this page is still alive.
+      vi.resetModules();
+      const duplicate = createMockSdk();
+      (await import("../index")).init(duplicate as any);
+
+      expect(duplicate.backend.destroyTerminal).not.toHaveBeenCalled();
+    });
+
+    it("should keep sending input after a call fails or never settles", async () => {
+      await run("shadowshell.new-tab");
+      sdk.backend.writeTerminal
+        .mockRejectedValueOnce(new Error("backend reloading"))
+        .mockReturnValueOnce(new Promise(() => {}));
+
+      const term = xterms.at(-1)!;
+      term.type("a");
+      await vi.advanceTimersByTimeAsync(0);
+      term.type("b"); // this call hangs
+      term.type("c");
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(sdk.backend.writeTerminal.mock.calls).toEqual([["term-1", "a"], ["term-1", "b"], ["term-1", "c"]]);
+    });
+
+    it("should send what was typed while the quick terminal was starting, in one ordered call", async () => {
+      let reply!: (id: string) => void;
+      sdk.backend.createTerminal.mockReturnValue(new Promise((r) => { reply = r; }));
+      run("shadowshell.toggle-dropup");
+      await vi.advanceTimersByTimeAsync(0);
+
+      const term = xterms.at(-1)!;
+      term.type("l");
+      term.type("s");
+      reply("term-7");
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(sdk.backend.writeTerminal.mock.calls).toEqual([["term-7", "ls"]]);
+    });
+
+    it("should send resizes one at a time and finish on the latest size", async () => {
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800);
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+      await run("shadowshell.new-tab");
+      await vi.advanceTimersByTimeAsync(100);
+      sdk.backend.resizeTerminal.mockClear();
+      const done: Array<() => void> = [];
+      sdk.backend.resizeTerminal.mockImplementation(
+        () => new Promise<boolean>((resolve) => done.push(() => resolve(true))),
+      );
+
+      const term = xterms.at(-1)! as any;
+      for (const cols of [100, 110, 120]) {
+        term.cols = cols;
+        resizeObservers.forEach((notify) => notify());
+      }
+      // 110 overtaking 120 would leave the PTY at the wrong width for good.
+      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([["term-1", 100, 24]]);
+
+      done[0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([["term-1", 100, 24], ["term-1", 120, 24]]);
+      vi.restoreAllMocks();
     });
 
     it("should report an exit that arrives before the terminal id is known", async () => {
@@ -224,7 +301,9 @@ describe("Frontend UI", () => {
       expect(xterms.at(-1)!.writeln).toHaveBeenCalledWith(expect.stringContaining("exited with code -1"));
       xterms.at(-1)!.type("x");
       expect(sdk.backend.writeTerminal).not.toHaveBeenCalled();
-      expect(owned()).toEqual([]);
+      // Not ours to stop on unload either: it is already gone.
+      window.dispatchEvent(new Event("pagehide"));
+      expect(sdk.backend.destroyTerminal).not.toHaveBeenCalled();
     });
   });
 });

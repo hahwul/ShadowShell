@@ -457,7 +457,9 @@ function ensureRelayScript(): string {
       }
       const scriptPath = join(dir, "relay.py");
       writeFileAtomic(scriptPath, RELAY_SCRIPT);
-      relayScriptPath = scriptPath;
+      // A temp directory is single use: if it were cached and later removed
+      // by a tmp reaper, whoever recreates that path would supply the script.
+      if (!useTemp) relayScriptPath = scriptPath;
       return scriptPath;
     } catch (err) {
       lastError = err;
