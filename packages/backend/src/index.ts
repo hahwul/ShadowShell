@@ -776,8 +776,9 @@ function setDefaultDirectory(
 }
 
 function getDefaultDirectory(sdk: SDK<API, BackendEvents>): string {
-  const settings = loadSettings();
-  return settings.defaultDirectory ?? "";
+  // typeof: settings.json is hand-editable and not validated on load
+  const dir = loadSettings().defaultDirectory;
+  return typeof dir === "string" ? dir : "";
 }
 
 function validateDirectory(

@@ -79,7 +79,8 @@ export function findPython3(
 ): string {
   if (cachedPath !== null && cachedPath !== "") return cachedPath;
   const saved = loadSettings(settingsFile).pythonPath;
-  if (saved !== undefined && saved !== "" && pathExists(saved)) return saved;
+  if (typeof saved === "string" && saved !== "" && pathExists(saved))
+    return saved;
   for (const p of [
     "/usr/bin/python3",
     "/usr/local/bin/python3",

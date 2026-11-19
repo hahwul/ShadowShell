@@ -1,9 +1,17 @@
 import type { Caido } from "@caido/sdk-frontend";
-import type { API, BackendEvents } from "backend";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import type { API, BackendEvents } from "backend";
 
+import {
+  escapeAttr,
+  escapeHtml,
+  sanitizeColor,
+  sanitizeSvgIcon,
+  toColorInputValue,
+} from "./helpers";
 import {
   addCustomPreset,
   deleteCustomPreset,
@@ -13,13 +21,7 @@ import {
   resetPreset,
   updatePreset,
 } from "./presets";
-import {
-  escapeAttr,
-  escapeHtml,
-  sanitizeColor,
-  sanitizeSvgIcon,
-  toColorInputValue,
-} from "./helpers";
+import "./styles/style.css";
 import {
   findPaneById,
   getAllPanes,
@@ -29,10 +31,6 @@ import {
   replaceLeaf,
   type SplitNode,
 } from "./tree";
-
-import "@xterm/xterm/css/xterm.css";
-
-import "./styles/style.css";
 
 type CaidoSDK = Caido<API, BackendEvents>;
 
@@ -142,7 +140,11 @@ async function resolveWorkingDirectory(
   sdk: CaidoSDK,
   preset?: Preset | null,
 ): Promise<string> {
-  if (preset?.defaultDirectory !== undefined && preset.defaultDirectory !== "")
+  // typeof: presets come from localStorage, which can hold anything
+  if (
+    typeof preset?.defaultDirectory === "string" &&
+    preset.defaultDirectory !== ""
+  )
     return preset.defaultDirectory;
   try {
     return await sdk.backend.getDefaultDirectory();
@@ -578,7 +580,7 @@ async function createTab(
   const tabName =
     name !== undefined && name !== ""
       ? name
-      : preset?.name !== undefined && preset.name !== ""
+      : typeof preset?.name === "string" && preset.name !== ""
         ? preset.name
         : `Shell ${tabCounter}`;
 

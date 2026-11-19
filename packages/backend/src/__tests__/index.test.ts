@@ -1,3 +1,7 @@
+import { spawn } from "child_process";
+import { mkdirSync } from "fs";
+import { connect } from "net";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Module mocks (hoisted before imports) ---
@@ -51,10 +55,6 @@ import {
   saveSettings,
   writeFileAtomic,
 } from "../utils";
-
-import { spawn } from "child_process";
-import { connect } from "net";
-import { mkdirSync } from "fs";
 
 // --- Helpers ---
 
