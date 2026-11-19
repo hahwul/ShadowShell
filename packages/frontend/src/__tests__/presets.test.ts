@@ -1,17 +1,18 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import {
-  type Preset,
-  BUILTIN_PRESETS,
-  ICONS,
-  getAllPresets,
-  updatePreset,
-  resetPreset,
   addCustomPreset,
+  BUILTIN_PRESETS,
   deleteCustomPreset,
-  loadOverrides,
-  saveOverrides,
+  getAllPresets,
+  ICONS,
   loadCustomPresets,
+  loadOverrides,
+  type Preset,
+  resetPreset,
   saveCustomPresets,
+  saveOverrides,
+  updatePreset,
 } from "../presets";
 
 // --- localStorage mock ---
@@ -87,7 +88,8 @@ describe("presets", () => {
         store["shadowshell-preset-overrides"] = bad;
         expect(loadOverrides()).toEqual({});
       }
-      store["shadowshell-preset-overrides"] = '{"claude":null,"gemini":{"command":"g"}}';
+      store["shadowshell-preset-overrides"] =
+        '{"claude":null,"gemini":{"command":"g"}}';
       expect(loadOverrides()).toEqual({ gemini: { command: "g" } });
     });
 
@@ -126,7 +128,8 @@ describe("presets", () => {
     it("should ignore non-array JSON and malformed entries", () => {
       store["shadowshell-custom-presets"] = '{"id":"x"}';
       expect(loadCustomPresets()).toEqual([]);
-      store["shadowshell-custom-presets"] = '[null, 1, {"id":"a"}, {"id":"b","name":"B"}]';
+      store["shadowshell-custom-presets"] =
+        '[null, 1, {"id":"a"}, {"id":"b","name":"B"}]';
       expect(loadCustomPresets().map((p) => p.id)).toEqual(["b"]);
       expect(() => getAllPresets()).not.toThrow();
     });
@@ -218,7 +221,15 @@ describe("presets", () => {
     it("should return consistent results across multiple calls", () => {
       saveOverrides({ gemini: { command: "gemini --fast" } });
       saveCustomPresets([
-        { id: "custom-1", name: "C1", icon: "", command: "c1", description: "", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "C1",
+          icon: "",
+          command: "c1",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       const first = getAllPresets();
       const second = getAllPresets();
@@ -228,7 +239,15 @@ describe("presets", () => {
 
     it("should mark all custom presets as builtin: false", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "C1", icon: "", command: "c1", description: "", color: "#000", builtin: true as any },
+        {
+          id: "custom-1",
+          name: "C1",
+          icon: "",
+          command: "c1",
+          description: "",
+          color: "#000",
+          builtin: true as any,
+        },
       ]);
       const presets = getAllPresets();
       const custom = presets.find((p) => p.id === "custom-1");
@@ -283,7 +302,15 @@ describe("presets", () => {
 
     it("should handle empty changes object for custom", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "Old", icon: "", command: "old", description: "d", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "Old",
+          icon: "",
+          command: "old",
+          description: "d",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       updatePreset("custom-1", {});
       const customs = loadCustomPresets();
@@ -293,7 +320,15 @@ describe("presets", () => {
 
     it("should not affect customs when updating a builtin", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "C1", icon: "", command: "c1", description: "", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "C1",
+          icon: "",
+          command: "c1",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       updatePreset("claude", { command: "claude --fast" });
       const customs = loadCustomPresets();
@@ -302,7 +337,15 @@ describe("presets", () => {
 
     it("should handle special characters in preset fields", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "Test", icon: "", command: "test", description: "d", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "Test",
+          icon: "",
+          command: "test",
+          description: "d",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       updatePreset("custom-1", {
         name: "이름 <script>alert(1)</script>",
@@ -318,7 +361,10 @@ describe("presets", () => {
 
   describe("resetPreset", () => {
     it("should remove override for builtin preset", () => {
-      saveOverrides({ claude: { command: "modified" }, gemini: { command: "modified" } });
+      saveOverrides({
+        claude: { command: "modified" },
+        gemini: { command: "modified" },
+      });
       resetPreset("claude");
       const overrides = loadOverrides();
       expect(overrides["claude"]).toBeUndefined();
@@ -332,7 +378,10 @@ describe("presets", () => {
 
     it("should restore original values after reset", () => {
       const original = BUILTIN_PRESETS.find((p) => p.id === "claude")!;
-      updatePreset("claude", { command: "claude --modified", description: "Changed" });
+      updatePreset("claude", {
+        command: "claude --modified",
+        description: "Changed",
+      });
       resetPreset("claude");
       const presets = getAllPresets();
       const claude = presets.find((p) => p.id === "claude");
@@ -356,8 +405,20 @@ describe("presets", () => {
     });
 
     it("should append to existing custom presets", () => {
-      addCustomPreset({ name: "First", icon: "", command: "first", description: "", color: "#000" });
-      addCustomPreset({ name: "Second", icon: "", command: "second", description: "", color: "#111" });
+      addCustomPreset({
+        name: "First",
+        icon: "",
+        command: "first",
+        description: "",
+        color: "#000",
+      });
+      addCustomPreset({
+        name: "Second",
+        icon: "",
+        command: "second",
+        description: "",
+        color: "#111",
+      });
       const customs = loadCustomPresets();
       expect(customs).toHaveLength(2);
       expect(customs[0]!.name).toBe("First");
@@ -365,8 +426,20 @@ describe("presets", () => {
     });
 
     it("should use Date.now() for id generation (may collide within same ms)", () => {
-      const r1 = addCustomPreset({ name: "A", icon: "", command: "a", description: "", color: "#000" });
-      const r2 = addCustomPreset({ name: "B", icon: "", command: "b", description: "", color: "#111" });
+      const r1 = addCustomPreset({
+        name: "A",
+        icon: "",
+        command: "a",
+        description: "",
+        color: "#000",
+      });
+      const r2 = addCustomPreset({
+        name: "B",
+        icon: "",
+        command: "b",
+        description: "",
+        color: "#111",
+      });
       // Both use Date.now() — ids may collide within same millisecond
       expect(r1.id).toMatch(/^custom-\d+$/);
       expect(r2.id).toMatch(/^custom-\d+$/);
@@ -376,7 +449,13 @@ describe("presets", () => {
     });
 
     it("should set builtin to false regardless of input", () => {
-      const result = addCustomPreset({ name: "X", icon: "", command: "x", description: "", color: "#000" });
+      const result = addCustomPreset({
+        name: "X",
+        icon: "",
+        command: "x",
+        description: "",
+        color: "#000",
+      });
       expect(result.builtin).toBe(false);
     });
 
@@ -385,7 +464,7 @@ describe("presets", () => {
         name: "한글 프리셋",
         icon: '<svg width="14" height="14"><circle/></svg>',
         command: "echo '한글'",
-        description: "Description with <html> & \"quotes\"",
+        description: 'Description with <html> & "quotes"',
         color: "#ff00ff",
       });
       const customs = loadCustomPresets();
@@ -399,8 +478,24 @@ describe("presets", () => {
   describe("deleteCustomPreset", () => {
     it("should remove the custom preset by id", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "A", icon: "", command: "a", description: "", color: "#000", builtin: false },
-        { id: "custom-2", name: "B", icon: "", command: "b", description: "", color: "#111", builtin: false },
+        {
+          id: "custom-1",
+          name: "A",
+          icon: "",
+          command: "a",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
+        {
+          id: "custom-2",
+          name: "B",
+          icon: "",
+          command: "b",
+          description: "",
+          color: "#111",
+          builtin: false,
+        },
       ]);
       deleteCustomPreset("custom-1");
       const customs = loadCustomPresets();
@@ -410,7 +505,15 @@ describe("presets", () => {
 
     it("should handle deleting non-existent id gracefully", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "A", icon: "", command: "a", description: "", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "A",
+          icon: "",
+          command: "a",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       deleteCustomPreset("nonexistent");
       expect(loadCustomPresets()).toHaveLength(1);
@@ -418,9 +521,33 @@ describe("presets", () => {
 
     it("should handle deleting all custom presets one by one", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "A", icon: "", command: "a", description: "", color: "#000", builtin: false },
-        { id: "custom-2", name: "B", icon: "", command: "b", description: "", color: "#111", builtin: false },
-        { id: "custom-3", name: "C", icon: "", command: "c", description: "", color: "#222", builtin: false },
+        {
+          id: "custom-1",
+          name: "A",
+          icon: "",
+          command: "a",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
+        {
+          id: "custom-2",
+          name: "B",
+          icon: "",
+          command: "b",
+          description: "",
+          color: "#111",
+          builtin: false,
+        },
+        {
+          id: "custom-3",
+          name: "C",
+          icon: "",
+          command: "c",
+          description: "",
+          color: "#222",
+          builtin: false,
+        },
       ]);
       deleteCustomPreset("custom-1");
       deleteCustomPreset("custom-2");
@@ -430,7 +557,15 @@ describe("presets", () => {
 
     it("should not affect builtins when deleting custom preset", () => {
       saveCustomPresets([
-        { id: "custom-1", name: "A", icon: "", command: "a", description: "", color: "#000", builtin: false },
+        {
+          id: "custom-1",
+          name: "A",
+          icon: "",
+          command: "a",
+          description: "",
+          color: "#000",
+          builtin: false,
+        },
       ]);
       deleteCustomPreset("claude"); // builtin id — should not crash or modify builtins
       expect(loadCustomPresets()).toHaveLength(1);

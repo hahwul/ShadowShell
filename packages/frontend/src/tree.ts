@@ -15,11 +15,13 @@ export interface SplitNode<P extends PaneBase = PaneBase> {
   second: PaneNode<P>;
 }
 
-export type PaneNode<P extends PaneBase = PaneBase> = LeafNode<P> | SplitNode<P>;
+export type PaneNode<P extends PaneBase = PaneBase> =
+  | LeafNode<P>
+  | SplitNode<P>;
 
 export function findPaneById<P extends PaneBase>(
   node: PaneNode<P>,
-  id: string | null
+  id: string | null,
 ): P | null {
   if (!id) return null;
   if (node.type === "leaf") {
@@ -36,7 +38,7 @@ export function getAllPanes<P extends PaneBase>(node: PaneNode<P>): P[] {
 export function replaceLeaf<P extends PaneBase>(
   node: PaneNode<P>,
   targetId: string | null,
-  replacer: (leaf: LeafNode<P>) => PaneNode<P>
+  replacer: (leaf: LeafNode<P>) => PaneNode<P>,
 ): PaneNode<P> {
   if (node.type === "leaf") {
     if (node.pane.id === targetId) {
@@ -53,7 +55,7 @@ export function replaceLeaf<P extends PaneBase>(
 
 export function removePaneFromTree<P extends PaneBase>(
   node: PaneNode<P>,
-  targetId: string
+  targetId: string,
 ): PaneNode<P> {
   if (node.type === "leaf") return node;
   if (node.first.type === "leaf" && node.first.pane.id === targetId) {
