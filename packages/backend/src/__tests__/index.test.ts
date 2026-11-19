@@ -147,10 +147,9 @@ describe("Backend API handlers", () => {
   });
 
   describe("getShellInfo", () => {
-    it("should return shell, platform, and home directory", () => {
+    it("should return platform and home directory, and no shell: the relay picks it", () => {
       const result = handlers.get("getShellInfo")!(sdk);
       expect(result).toEqual({
-        defaultShell: "/bin/zsh",
         platform: "darwin",
         home: "/home/testuser",
       });
@@ -485,9 +484,18 @@ describe("Backend API handlers", () => {
   }
 
   describe("process lifecycle events", () => {
-    it("should send terminalExit event when process exits with code", () => {
+    // A relay that reported READY: when it exits, a terminal that ran has
+    // ended. (One that exits before READY failed to start, see below.)
+    function startRelay() {
+      vi.mocked(connect).mockImplementation((() => createMockSocket()) as any);
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
+      getStdoutHandler(proc)!(Buffer.from(READY));
+      return { id, proc };
+    }
+
+    it("should send terminalExit event when process exits with code", () => {
+      const { id, proc } = startRelay();
       const exitHandler = getProcHandler(proc, "exit");
       expect(exitHandler).toBeDefined();
 
@@ -499,8 +507,7 @@ describe("Backend API handlers", () => {
     });
 
     it("should remove terminal from registry on exit", () => {
-      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      const proc = lastSpawnedProc();
+      const { id, proc } = startRelay();
       const exitHandler = getProcHandler(proc, "exit");
 
       exitHandler!(0);
@@ -510,8 +517,7 @@ describe("Backend API handlers", () => {
     });
 
     it("should use -1 as exit code when null is passed", () => {
-      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      const proc = lastSpawnedProc();
+      const { id, proc } = startRelay();
       const exitHandler = getProcHandler(proc, "exit");
 
       exitHandler!(null);
@@ -522,8 +528,7 @@ describe("Backend API handlers", () => {
     });
 
     it("should propagate non-zero exit codes", () => {
-      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      const proc = lastSpawnedProc();
+      const { id, proc } = startRelay();
       const exitHandler = getProcHandler(proc, "exit");
 
       exitHandler!(137);
@@ -706,24 +711,38 @@ describe("Backend API handlers", () => {
       }
     });
 
-    it("should forward socket data as terminalOutput events", () => {
-      const mockSocket = createMockSocket();
-      const flush = deferredConnect(mockSocket);
+    it("should forward socket data as one terminalOutput event per tick, before the exit", () => {
+      vi.useFakeTimers();
+      try {
+        const mockSocket = createMockSocket();
+        const flush = deferredConnect(mockSocket);
 
-      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
-      const proc = lastSpawnedProc();
-      const stdoutHandler = getStdoutHandler(proc);
-      stdoutHandler!(Buffer.from(READY));
-      flush();
+        const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+        const proc = lastSpawnedProc();
+        const stdoutHandler = getStdoutHandler(proc);
+        stdoutHandler!(Buffer.from(READY));
+        flush();
 
-      const dataHandler = getSocketHandler(mockSocket, "data");
-      expect(dataHandler).toBeDefined();
-      dataHandler!(Buffer.from("hello world"));
+        const dataHandler = getSocketHandler(mockSocket, "data");
+        expect(dataHandler).toBeDefined();
+        dataHandler!(Buffer.from("hello "));
+        dataHandler!(Buffer.from("world"));
+        vi.advanceTimersByTime(0);
+        dataHandler!(Buffer.from("bye"));
+        getProcHandler(proc, "exit")!(0);
 
-      expect(sdk.api.send).toHaveBeenCalledWith("terminalOutput", {
-        terminalId: id,
-        data: "hello world",
-      });
+        expect(
+          vi
+            .mocked(sdk.api.send)
+            .mock.calls.filter(([, ev]) => ev.terminalId === id),
+        ).toEqual([
+          ["terminalOutput", { terminalId: id, data: "hello world" }],
+          ["terminalOutput", { terminalId: id, data: "bye" }],
+          ["terminalExit", { terminalId: id, code: 0 }],
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should clear session.socket on close event", () => {
@@ -979,6 +998,7 @@ describe("Backend API handlers", () => {
       dataHandler(bytes.subarray(0, 4));
       dataHandler(bytes.subarray(4, 8));
       dataHandler(bytes.subarray(8));
+      getSocketHandler(mockSocket, "close")!();
       const text = vi
         .mocked(sdk.api.send)
         .mock.calls.filter(
@@ -989,10 +1009,44 @@ describe("Backend API handlers", () => {
       expect(text).toBe("한글✓");
     });
 
-    it("should report terminalExit when the relay fails to spawn (error without exit)", () => {
+    it("should report why the relay failed to spawn (error without exit)", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       getProcHandler(proc, "error")!(new Error("ENOENT"));
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+        terminalId: id,
+        code: -1,
+        error: "/usr/bin/python3: ENOENT",
+      });
+    });
+
+    it("should report what a relay that died before it was ready printed, even after its exit", () => {
+      vi.useFakeTimers();
+      try {
+        const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+        const proc = lastSpawnedProc();
+        getProcHandler(proc, "exit")!(1);
+        // e.g. the macOS python3 stub without the Command Line Tools
+        getStderrHandler(proc)!(
+          Buffer.from("xcode-select: note: No developer tools were found\n"),
+        );
+        vi.advanceTimersByTime(100);
+        expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+          terminalId: id,
+          code: 1,
+          error:
+            "/usr/bin/python3: xcode-select: note: No developer tools were found",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("should not call it a failed start when the terminal was closed before the relay was ready", () => {
+      const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
+      const proc = lastSpawnedProc();
+      handlers.get("destroyTerminal")!(sdk, id);
+      getProcHandler(proc, "exit")!(null);
       expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
         terminalId: id,
         code: -1,

@@ -75,7 +75,10 @@ function createMockSdk() {
       resizeTerminal: vi.fn(async () => true),
       destroyTerminal: vi.fn(async () => true),
       getDefaultDirectory: vi.fn(async () => ""),
+      setDefaultDirectory: vi.fn(async (_path: string) => true),
       validateDirectory: vi.fn(async (_path: string) => true),
+      getPythonPath: vi.fn(async () => "/usr/bin/python3"),
+      setPythonPath: vi.fn(async (_path: string) => true),
       onEvent: vi.fn(),
     },
     navigation: { addPage: vi.fn(), goTo: vi.fn() },
@@ -196,6 +199,74 @@ describe("Frontend UI", () => {
       resolve(true);
       await vi.advanceTimersByTimeAsync(0);
       expect(savedPresets()).toHaveLength(0);
+    });
+  });
+
+  describe("settings", () => {
+    const field = (name: string) => $<HTMLInputElement>(`[data-field=${name}]`);
+    async function openSettings() {
+      $(".ss-settings-btn").click();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    async function save() {
+      $("[data-action=save]").click();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    it("should not save the directory when the Python path is rejected", async () => {
+      sdk.backend.setPythonPath.mockResolvedValue(false);
+      await openSettings();
+      field("defaultDirectory").value = "/work";
+      field("pythonPath").value = "/nope/python3";
+      await save();
+
+      expect(sdk.backend.setDefaultDirectory).not.toHaveBeenCalled();
+      expect($("[data-hint=python]").textContent).toContain("Path not found");
+      expect($(".ss-modal-overlay")).not.toBeNull();
+    });
+
+    it("should not save the auto-detected Python path back as a setting", async () => {
+      await openSettings();
+      expect(field("pythonPath").value).toBe("/usr/bin/python3");
+      field("defaultDirectory").value = "/work";
+      await save();
+
+      expect(sdk.backend.setPythonPath).not.toHaveBeenCalled();
+      expect(sdk.backend.setDefaultDirectory).toHaveBeenCalledWith("/work");
+      expect($(".ss-modal-overlay")).toBeNull();
+    });
+
+    it("should save a Python path the user changed, or cleared to auto-detect", async () => {
+      await openSettings();
+      field("pythonPath").value = "";
+      await save();
+      expect(sdk.backend.setPythonPath).toHaveBeenCalledWith("");
+    });
+
+    it("should drop the error of a field that was fixed and not save if cancelled meanwhile", async () => {
+      sdk.backend.validateDirectory.mockResolvedValueOnce(false);
+      await openSettings();
+      field("defaultDirectory").value = "/typo";
+      await save();
+      expect($("[data-hint=directory]").textContent).toContain("not found");
+
+      let validated!: (valid: boolean) => void;
+      sdk.backend.validateDirectory.mockReturnValueOnce(
+        new Promise((r) => {
+          validated = r;
+        }),
+      );
+      const overlay = $(".ss-modal-overlay");
+      const hint = $("[data-hint=directory]");
+      field("defaultDirectory").value = "/work";
+      $("[data-action=save]").click();
+      expect(hint.textContent).not.toContain("not found");
+      $("[data-action=cancel]").click();
+      validated(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(overlay.isConnected).toBe(false);
+      expect(sdk.backend.setDefaultDirectory).not.toHaveBeenCalled();
     });
   });
 
@@ -344,6 +415,35 @@ describe("Frontend UI", () => {
         ["term-1", 120, 24],
       ]);
       vi.restoreAllMocks();
+    });
+
+    it("should explain a relay that could not start, in the pane and in the quick terminal", async () => {
+      await run("shadowshell.new-tab");
+      const pane = xterms.at(-1)!;
+      emit("terminalExit", {
+        terminalId: "term-1",
+        code: 1,
+        error: "/usr/bin/python3: xcode-select: no developer tools",
+      });
+      expect(pane.writeln).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /could not start: \/usr\/bin\/python3: xcode-select: no developer tools.*Settings.*Python 3 Path, then open a new tab/s,
+        ),
+      );
+
+      run("shadowshell.toggle-dropup");
+      await vi.advanceTimersByTimeAsync(0);
+      const quick = xterms.at(-1)!;
+      emit("terminalExit", {
+        terminalId: "term-2",
+        code: -1,
+        error: "/usr/bin/python3: ENOENT",
+      });
+      expect(quick.writeln).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /could not start: \/usr\/bin\/python3: ENOENT.*Settings.*Python 3 Path, then reopen the quick terminal/s,
+        ),
+      );
     });
 
     it("should report an exit that arrives before the terminal id is known", async () => {

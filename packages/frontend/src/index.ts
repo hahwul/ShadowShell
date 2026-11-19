@@ -235,24 +235,44 @@ function destroyLeftoverTerminals(sdk: CaidoSDK): void {
   }
 }
 
+interface ExitInfo {
+  code: number;
+  // Set when the relay never started; see the backend's terminalExit event.
+  error?: string;
+}
+
+// What to print once a terminal's process is gone. A relay that could not
+// start is nearly always a Python problem, which only the user can fix.
+function exitNotice(exit: ExitInfo, quick = false): string {
+  if (typeof exit.error !== "string") {
+    const hint = quick ? " — reopen to start a new shell" : "";
+    return `\x1b[90m[Process exited with code ${exit.code}${hint}]\x1b[0m`;
+  }
+  const retry = quick ? "reopen the quick terminal" : "open a new tab";
+  return (
+    `\x1b[31m[ShadowShell] The terminal could not start: ${exit.error.replace(/\r?\n/g, "\r\n")}\x1b[0m\r\n` +
+    `\x1b[90mTerminals run through Python 3. Set a working one under Settings (gear icon on the ShadowShell page) → Python 3 Path, then ${retry}.\x1b[0m`
+  );
+}
+
 // An exit can outrun the createTerminal reply that tells us the id (e.g. the
 // relay failed to start), so exits nobody claimed yet are kept for a moment.
 // ponytail: also collects exits of panes we closed ourselves; capped, not swept.
-const unclaimedExits = new Map<string, number>();
+const unclaimedExits = new Map<string, ExitInfo>();
 
-function noteUnclaimedExit(backendId: string, code: number): void {
-  unclaimedExits.set(backendId, code);
+function noteUnclaimedExit(backendId: string, exit: ExitInfo): void {
+  unclaimedExits.set(backendId, exit);
   if (unclaimedExits.size > 64)
     unclaimedExits.delete(unclaimedExits.keys().next().value);
 }
 
-// Registers a freshly created backend terminal; returns its exit code if it
+// Registers a freshly created backend terminal; returns its exit if it
 // already exited before we learned its id.
-function claimTerminal(backendId: string): number | undefined {
-  const code = unclaimedExits.get(backendId);
+function claimTerminal(backendId: string): ExitInfo | undefined {
+  const exit = unclaimedExits.get(backendId);
   unclaimedExits.delete(backendId);
-  if (code === undefined) trackTerminal(backendId, true);
-  return code;
+  if (exit === undefined) trackTerminal(backendId, true);
+  return exit;
 }
 
 // Last size pushed per terminal, so divider drags and observer ticks that
@@ -344,9 +364,9 @@ async function createPane(
   }
 
   if (backendId !== null && backendId !== "") {
-    const exitCode = claimTerminal(backendId);
-    if (exitCode !== undefined) {
-      terminal.writeln(`\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`);
+    const exit = claimTerminal(backendId);
+    if (exit !== undefined) {
+      terminal.writeln(exitNotice(exit));
       backendId = null;
     }
   }
@@ -1022,15 +1042,13 @@ function setupEvents(sdk: CaidoSDK): void {
     for (const tab of tabs) {
       const pane = findPaneByBackendId(tab.root, event.terminalId);
       if (pane) {
-        pane.terminal.writeln(
-          `\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`,
-        );
+        pane.terminal.writeln(`\r\n${exitNotice(event)}`);
         pane.backendId = null;
         return;
       }
     }
     if (event.terminalId !== dropupBackendId)
-      noteUnclaimedExit(event.terminalId, event.code);
+      noteUnclaimedExit(event.terminalId, event);
   });
 
   const resizeObserver = new ResizeObserver(() => {
@@ -1224,6 +1242,10 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   const firstInput = modal.querySelector("input") as HTMLInputElement;
   firstInput?.focus();
   firstInput?.select();
+  const hints = Array.from(modal.querySelectorAll("[data-hint]"), (hint) => ({
+    hint,
+    text: hint.textContent,
+  }));
 
   const closeModal = () => {
     overlay.remove();
@@ -1242,57 +1264,58 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
       return;
     }
     if (action === "save") {
-      const defaultDirectory = (
-        modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement
-      ).value.trim();
-      const pythonPath = (
-        modal.querySelector("[data-field=pythonPath]") as HTMLInputElement
-      ).value.trim();
+      const field = (name: string) =>
+        modal.querySelector(`[data-field=${name}]`) as HTMLInputElement;
+      const reject = (name: string, hintName: string, message: string) => {
+        const input = field(name);
+        input.style.borderColor = "#ef4444";
+        const hint = modal.querySelector(
+          `[data-hint=${hintName}]`,
+        ) as HTMLDivElement;
+        hint.textContent = message;
+        hint.classList.add("ss-modal__hint--error");
+        input.focus();
+      };
+      const rejectDirectory = () =>
+        reject(
+          "defaultDirectory",
+          "directory",
+          "Directory not found. Please enter a valid directory path.",
+        );
+      const defaultDirectory = field("defaultDirectory").value.trim();
+      const pythonPath = field("pythonPath").value.trim();
+      // A field rejected by an earlier attempt may be fine by now.
+      for (const { hint, text } of hints) {
+        hint.textContent = text;
+        hint.classList.remove("ss-modal__hint--error");
+      }
+      field("defaultDirectory").style.borderColor = "";
+      field("pythonPath").style.borderColor = "";
 
-      // Validate and save default directory
-      if (defaultDirectory) {
-        try {
-          const dirOk = await sdk.backend.setDefaultDirectory(defaultDirectory);
-          if (!dirOk) {
-            const input = modal.querySelector(
-              "[data-field=defaultDirectory]",
-            ) as HTMLInputElement;
-            input.style.borderColor = "#ef4444";
-            const hint = modal.querySelector(
-              "[data-hint=directory]",
-            ) as HTMLDivElement;
-            hint.textContent =
-              "Directory not found. Please enter a valid directory path.";
-            hint.classList.add("ss-modal__hint--error");
-            input.focus();
-            return;
-          }
-        } catch {
+      try {
+        // Check both fields before saving either, so a rejected Python path
+        // does not leave the directory already changed.
+        if (!(await sdk.backend.validateDirectory(defaultDirectory))) {
+          rejectDirectory();
           return;
         }
-      } else {
-        try {
-          await sdk.backend.setDefaultDirectory("");
-        } catch {
-          /* ignore */
+        // Cancelled while validating: the user backed out.
+        if (!overlay.isConnected) return;
+        // The field is prefilled with the path in use, which may only be the
+        // auto-detected one; saving that back would pin it as a setting.
+        if (
+          pythonPath !== currentPythonPath &&
+          !(await sdk.backend.setPythonPath(pythonPath))
+        ) {
+          reject(
+            "pythonPath",
+            "python",
+            "Path not found. Please enter a valid Python 3 binary path.",
+          );
+          return;
         }
-      }
-
-      // Validate and save python path
-      try {
-        const ok = await sdk.backend.setPythonPath(pythonPath);
-        if (!ok) {
-          const input = modal.querySelector(
-            "[data-field=pythonPath]",
-          ) as HTMLInputElement;
-          input.style.borderColor = "#ef4444";
-          const hint = modal.querySelector(
-            "[data-hint=python]",
-          ) as HTMLDivElement;
-          hint.textContent =
-            "Path not found. Please enter a valid Python 3 binary path.";
-          hint.classList.add("ss-modal__hint--error");
-          input.focus();
+        if (!(await sdk.backend.setDefaultDirectory(defaultDirectory))) {
+          rejectDirectory();
           return;
         }
       } catch {
@@ -1359,11 +1382,9 @@ function startDropupSession(sdk: CaidoSDK): void {
     .then((id) => {
       const pending = dropupPendingInput.join("");
       dropupPendingInput = [];
-      const exitCode = claimTerminal(id);
-      if (exitCode !== undefined) {
-        dropupTerminal?.writeln(
-          `\x1b[90m[Process exited with code ${exitCode} — reopen to start a new shell]\x1b[0m`,
-        );
+      const exit = claimTerminal(id);
+      if (exit !== undefined) {
+        dropupTerminal?.writeln(exitNotice(exit, true));
         return;
       }
       dropupBackendId = id;
@@ -1443,9 +1464,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
 
     sdk.backend.onEvent("terminalExit", (event) => {
       if (event.terminalId === dropupBackendId && dropupTerminal) {
-        dropupTerminal.writeln(
-          `\r\n\x1b[90m[Process exited with code ${event.code} — reopen to start a new shell]\x1b[0m`,
-        );
+        dropupTerminal.writeln(`\r\n${exitNotice(event, true)}`);
         dropupBackendId = null;
       }
     });

@@ -133,6 +133,30 @@ describe("presets", () => {
       expect(loadCustomPresets().map((p) => p.id)).toEqual(["b"]);
       expect(() => getAllPresets()).not.toThrow();
     });
+
+    it("should hand out only text fields, whatever storage holds", () => {
+      // Non-strings used to reach the UI: the preset editor threw on open
+      // (escapeAttr), so a broken override could not even be reset.
+      store["shadowshell-preset-overrides"] =
+        '{"claude":{"command":5,"description":null,"defaultDirectory":{}}}';
+      store["shadowshell-custom-presets"] =
+        '[{"id":"b","name":"B","command":{},"color":7,"icon":1}]';
+      const [claude] = getAllPresets();
+      expect(claude).toMatchObject({
+        command: "claude",
+        description: "Anthropic Claude Code CLI",
+      });
+      expect(claude!.defaultDirectory).toBeUndefined();
+      expect(getAllPresets().at(-1)).toEqual({
+        id: "b",
+        name: "B",
+        command: "",
+        description: "",
+        color: "",
+        icon: ICONS.custom,
+        builtin: false,
+      });
+    });
   });
 
   describe("getAllPresets", () => {
