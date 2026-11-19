@@ -34,21 +34,24 @@ const sdk = {
   api: {
     register: (name: string, fn: Handler) => handlers.set(name, fn),
     send: vi.fn<
-      (name: string, ev: { terminalId: string; code: number }) => void
+      (
+        name: string,
+        ev: { terminalId: string; code: number; data: string },
+      ) => void
     >(),
   },
   console: { log: () => {} },
 };
 init(sdk as unknown as Parameters<typeof init>[0]);
 
-async function exitCodeOf(command: string): Promise<number> {
+async function exitCodeOf(command: string, timeout = 10000): Promise<number> {
   const id = handlers.get("createTerminal")!(sdk, homedir(), command, "");
   const exitEvent = () =>
     sdk.api.send.mock.calls.find(
       ([name, ev]) => name === "terminalExit" && ev.terminalId === id,
     );
   await vi.waitFor(() => expect(exitEvent()).toBeDefined(), {
-    timeout: 10000,
+    timeout,
     interval: 50,
   });
   return exitEvent()![1].code;
@@ -67,4 +70,31 @@ describe.skipIf(!hasPython)("relay exit status", () => {
   it("reports a shell killed by a signal as 128+signal", async () => {
     expect(await exitCodeOf("kill -9 $$")).toBe(137);
   }, 15000);
+});
+
+describe.skipIf(!hasPython)("relay flow control", () => {
+  it("keeps the shell alive when output outpaces a stalled client", async () => {
+    const total = 16 * 1024 * 1024;
+    let received = 0;
+    let stalled = false;
+    sdk.api.send.mockImplementation((name, ev) => {
+      if (name !== "terminalOutput") return;
+      received += ev.data.length;
+      if (stalled || received < 1024 * 1024) return;
+      stalled = true;
+      // Block the event loop so the backend stops reading the relay socket
+      // while the command keeps writing.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
+    });
+    try {
+      const code = await exitCodeOf(
+        `head -c ${total} /dev/zero | tr '\\0' x; exit 3`,
+        30000,
+      );
+      expect(code).toBe(3);
+      await vi.waitFor(() => expect(received).toBeGreaterThanOrEqual(total));
+    } finally {
+      sdk.api.send.mockReset();
+    }
+  }, 40000);
 });

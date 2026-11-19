@@ -52,6 +52,7 @@ import {
 } from "../utils";
 import { spawn } from "child_process";
 import { connect } from "net";
+import { mkdirSync } from "fs";
 
 // --- Helpers ---
 
@@ -995,11 +996,36 @@ describe("Backend API handlers", () => {
       });
       freshSdk._handlers.get("createTerminal")!(freshSdk, "/a", "", "s");
       expect(spawn).toHaveBeenLastCalledWith("/usr/bin/python3", [
-        "/tmp/shadowshell/relay.py",
+        expect.stringMatching(/^\/tmp\/shadowshell-[^/]+\/relay\.py$/),
         "/bin/zsh",
         "/a",
       ]);
       freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
+    });
+
+    it("should never adopt an existing directory in the shared temp dir", async () => {
+      vi.resetModules();
+      const fresh = await import("../index");
+      const freshSdk = createMockSdk();
+      fresh.init(freshSdk as any);
+      vi.mocked(writeFileAtomic).mockReset();
+      vi.mocked(writeFileAtomic).mockImplementationOnce(() => {
+        throw new Error("EACCES");
+      });
+      // Every path "exists" (pathExists is mocked to true), as if another
+      // local user had pre-created the fallback directory.
+      vi.mocked(mkdirSync).mockImplementationOnce(() => {
+        throw new Error("EEXIST");
+      });
+      const create = freshSdk._handlers.get("createTerminal")!;
+      expect(() => create(freshSdk, "/a", "", "s")).toThrow("EEXIST");
+      // Non-recursive, so it fails instead of reusing what is already there.
+      expect(mkdirSync).toHaveBeenCalledWith(
+        expect.stringMatching(/^\/tmp\/shadowshell-[^/]+$/),
+        { mode: 0o700 }
+      );
+      expect(writeFileAtomic).toHaveBeenCalledTimes(1);
+      expect(spawn).not.toHaveBeenCalled();
     });
 
     it("should stop the relay immediately on socket error", () => {

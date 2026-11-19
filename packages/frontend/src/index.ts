@@ -133,6 +133,68 @@ function quiet(promise: Promise<unknown>): void {
   promise.catch(() => {});
 }
 
+// Backend calls are separate requests with no ordering guarantee, so input is
+// sent one call at a time per terminal; whatever is typed meanwhile goes out
+// together in the next call.
+const queuedInput = new Map<string, string>();
+
+function sendInput(backendId: string, data: string): void {
+  const queued = queuedInput.get(backendId);
+  queuedInput.set(backendId, (queued ?? "") + data);
+  if (queued !== undefined) return; // already draining this terminal
+  void (async () => {
+    let chunk: string | undefined;
+    while ((chunk = queuedInput.get(backendId))) {
+      queuedInput.set(backendId, "");
+      try { await sdkRef.backend.writeTerminal(backendId, chunk); } catch { /* backend reloading */ }
+    }
+    queuedInput.delete(backendId);
+  })();
+}
+
+// The backend outlives a page reload but the xterm side does not, so shells
+// from this window's previous load would keep running with nothing attached.
+// sessionStorage is per window and survives a reload: remember ours there and
+// stop the leftovers on the next init.
+const OWNED_TERMINALS_KEY = "shadowshell.terminals";
+const ownedTerminals = new Set<string>();
+
+function trackTerminal(backendId: string, alive: boolean): void {
+  if (alive) ownedTerminals.add(backendId);
+  else ownedTerminals.delete(backendId);
+  try { sessionStorage.setItem(OWNED_TERMINALS_KEY, JSON.stringify([...ownedTerminals])); } catch { /* storage unavailable */ }
+}
+
+function destroyLeftoverTerminals(sdk: CaidoSDK): void {
+  try {
+    const ids: unknown = JSON.parse(sessionStorage.getItem(OWNED_TERMINALS_KEY) || "[]");
+    sessionStorage.removeItem(OWNED_TERMINALS_KEY);
+    if (!Array.isArray(ids)) return;
+    for (const id of ids) {
+      if (typeof id === "string") quiet(sdk.backend.destroyTerminal(id));
+    }
+  } catch { /* storage unavailable or corrupt */ }
+}
+
+// An exit can outrun the createTerminal reply that tells us the id (e.g. the
+// relay failed to start), so exits nobody claimed yet are kept for a moment.
+// ponytail: also collects exits of panes we closed ourselves; capped, not swept.
+const unclaimedExits = new Map<string, number>();
+
+function noteUnclaimedExit(backendId: string, code: number): void {
+  unclaimedExits.set(backendId, code);
+  if (unclaimedExits.size > 64) unclaimedExits.delete(unclaimedExits.keys().next().value!);
+}
+
+// Registers a freshly created backend terminal; returns its exit code if it
+// already exited before we learned its id.
+function claimTerminal(backendId: string): number | undefined {
+  const code = unclaimedExits.get(backendId);
+  unclaimedExits.delete(backendId);
+  if (code === undefined) trackTerminal(backendId, true);
+  return code;
+}
+
 // Last size pushed per terminal, so divider drags and observer ticks that
 // don't change cols/rows don't each cost a backend round trip.
 const syncedSizes = new WeakMap<Terminal, string>();
@@ -198,12 +260,18 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
     terminal.writeln(`\x1b[31m[ShadowShell] Failed to create terminal: ${err}\x1b[0m`);
   }
 
+  if (backendId) {
+    const exitCode = claimTerminal(backendId);
+    if (exitCode !== undefined) {
+      terminal.writeln(`\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`);
+      backendId = null;
+    }
+  }
+
   const pane: Pane = { id, backendId, terminal, fitAddon, searchAddon, element };
 
   terminal.onData((data) => {
-    if (pane.backendId) {
-      quiet(sdk.backend.writeTerminal(pane.backendId, data));
-    }
+    if (pane.backendId) sendInput(pane.backendId, data);
   });
 
   return pane;
@@ -214,6 +282,7 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
 function disposePane(sdk: CaidoSDK, pane: Pane): void {
   if (pane.backendId) {
     quiet(sdk.backend.destroyTerminal(pane.backendId));
+    trackTerminal(pane.backendId, false);
     pane.backendId = null;
   }
   pane.terminal.dispose();
@@ -441,7 +510,9 @@ function switchToTab(sdk: CaidoSDK, tabId: string): void {
 
   const panes = getAllPanes(target.root);
   if (panes.length > 0 && !findPaneById(target.root, activePaneId)) {
-    setActivePane(panes[0]!.id);
+    // The tab still carries the marker of the pane that was active in it.
+    const last = panes.find((p) => p.element.classList.contains("ss-pane--active"));
+    setActivePane((last ?? panes[0]!).id);
   }
 
   renderTabBar(sdk);
@@ -772,14 +843,16 @@ function setupEvents(sdk: CaidoSDK): void {
   });
 
   sdk.backend.onEvent("terminalExit", (event) => {
+    trackTerminal(event.terminalId, false);
     for (const tab of tabs) {
       const pane = findPaneByBackendId(tab.root, event.terminalId);
       if (pane) {
         pane.terminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
         pane.backendId = null;
-        break;
+        return;
       }
     }
+    if (event.terminalId !== dropupBackendId) noteUnclaimedExit(event.terminalId, event.code);
   });
 
   const resizeObserver = new ResizeObserver(() => {
@@ -861,6 +934,9 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
           }
         } catch { /* ignore */ }
       }
+      // Closed while validating (second Save click, Cancel, Escape): the
+      // first click already saved, or the user backed out.
+      if (!overlay.isConnected) return;
       if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom, defaultDirectory }); }
       else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color"), defaultDirectory }); }
       closeModal(); renderPresetBar(sdk);
@@ -1006,8 +1082,12 @@ function toggleDropup(sdk: CaidoSDK): void {
     if (!dropupBackendId && !dropupStarting) startDropupSession(sdk);
     setTimeout(() => {
       fitDropup();
-      dropupTerminal?.focus();
+      if (dropupVisible) dropupTerminal?.focus();
     }, 200);
+  } else if (dropupPanel!.contains(document.activeElement)) {
+    // The panel is only slid off-screen, so its terminal would keep the
+    // keyboard focus and silently receive whatever the user types next.
+    (document.activeElement as HTMLElement).blur();
   }
 }
 
@@ -1017,9 +1097,15 @@ function startDropupSession(sdk: CaidoSDK): void {
   resolveWorkingDirectory(sdk).then((dir) => {
     return sdk.backend.createTerminal(dir, "", "Shell");
   }).then((id) => {
-    dropupBackendId = id;
-    for (const data of dropupPendingInput) quiet(sdk.backend.writeTerminal(id, data));
+    const pending = dropupPendingInput.join("");
     dropupPendingInput = [];
+    const exitCode = claimTerminal(id);
+    if (exitCode !== undefined) {
+      dropupTerminal?.writeln(`\x1b[90m[Process exited with code ${exitCode} — reopen to start a new shell]\x1b[0m`);
+      return;
+    }
+    dropupBackendId = id;
+    if (pending) sendInput(id, pending);
     fitDropup();
   }).catch(() => {
     dropupPendingInput = [];
@@ -1073,7 +1159,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
 
   dropupTerminal.onData((data) => {
     if (dropupBackendId) {
-      quiet(sdk.backend.writeTerminal(dropupBackendId, data));
+      sendInput(dropupBackendId, data);
     } else if (dropupStarting) {
       dropupPendingInput.push(data);
     }
@@ -1105,6 +1191,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
 
 export const init = (sdk: CaidoSDK) => {
   sdkRef = sdk;
+  destroyLeftoverTerminals(sdk);
   const body = buildUI(sdk);
   renderPresetBar(sdk);
 
