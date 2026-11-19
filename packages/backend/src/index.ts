@@ -196,14 +196,19 @@ def run():
     # PTY write buffer: data the client sent as "input" but we couldn't fully
     # write to the PTY yet because the kernel buffer was full.
     # OUT_CAP bounds the outbound buffer so a stuck/slow client can't grow
-    # this relay's memory without limit.
+    # this relay's memory without limit. At the cap we stop reading the PTY,
+    # which blocks the program writing to it until the client catches up
+    # (flow control); dropping the client instead killed the user's shell
+    # whenever output briefly outpaced the client.
     OUT_CAP = 8 * 1024 * 1024
     in_buf = b""
-    out_buf = b""
+    out_buf = bytearray()
     pty_buf = b""
     try:
         while True:
-            rlist = [master_fd, conn]
+            rlist = [conn]
+            if len(out_buf) < OUT_CAP:
+                rlist.append(master_fd)
             wlist = []
             if out_buf:
                 wlist.append(conn)
@@ -221,9 +226,6 @@ def run():
                         if not data:
                             raise EOFError
                         out_buf += data
-                        if len(out_buf) > OUT_CAP:
-                            log(f"out_buf exceeded {OUT_CAP} bytes; dropping client")
-                            return
                     except BlockingIOError:
                         pass
                     except (OSError, EOFError):
@@ -276,7 +278,7 @@ def run():
                     try:
                         sent = conn.send(out_buf)
                         if sent > 0:
-                            out_buf = out_buf[sent:]
+                            del out_buf[:sent]
                     except BlockingIOError:
                         pass
                     except Exception:
@@ -441,12 +443,23 @@ function ensureRelayScript(): string {
   // directory when HOME is missing or read-only so terminals still work.
   if (relayScriptPath && pathExists(relayScriptPath)) return relayScriptPath;
   let lastError: unknown;
-  for (const dir of [SETTINGS_DIR, join(tmpdir(), "shadowshell")]) {
+  for (const useTemp of [false, true]) {
     try {
-      if (!pathExists(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+      let dir = SETTINGS_DIR;
+      if (useTemp) {
+        // Never adopt an existing directory here: another local user could
+        // have pre-created a fixed name and would then be able to swap the
+        // script we execute. A non-recursive mkdir fails if the path exists.
+        dir = join(tmpdir(), `shadowshell-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        mkdirSync(dir, { mode: 0o700 });
+      } else if (!pathExists(dir)) {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
       const scriptPath = join(dir, "relay.py");
       writeFileAtomic(scriptPath, RELAY_SCRIPT);
-      relayScriptPath = scriptPath;
+      // A temp directory is single use: if it were cached and later removed
+      // by a tmp reaper, whoever recreates that path would supply the script.
+      if (!useTemp) relayScriptPath = scriptPath;
       return scriptPath;
     } catch (err) {
       lastError = err;
