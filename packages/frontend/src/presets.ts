@@ -16,28 +16,28 @@ const svgIcon = (path: string) =>
 export const ICONS = {
   claude: svgIcon(
     `<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>` +
-    `<circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>`
+      `<circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.2"/>`,
   ),
   gemini: svgIcon(
-    `<path d="M7 1l2.5 4.5L14 7l-4.5 1.5L7 13l-2.5-4.5L0 7l4.5-1.5z" fill="currentColor" opacity="0.8"/>`
+    `<path d="M7 1l2.5 4.5L14 7l-4.5 1.5L7 13l-2.5-4.5L0 7l4.5-1.5z" fill="currentColor" opacity="0.8"/>`,
   ),
   bolt: svgIcon(
-    `<path d="M8 1L3 8h4l-1 5 5-7H7l1-5z" fill="currentColor" opacity="0.85"/>`
+    `<path d="M8 1L3 8h4l-1 5 5-7H7l1-5z" fill="currentColor" opacity="0.85"/>`,
   ),
   circle: svgIcon(
-    `<circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>`
+    `<circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>`,
   ),
   gear: svgIcon(
     `<circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.2"/>` +
-    `<path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8l-1.4 1.4M4.2 9.8l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>`
+      `<path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8l-1.4 1.4M4.2 9.8l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>`,
   ),
   terminal: svgIcon(
     `<rect x="1" y="2.5" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>` +
-    `<path d="M3.5 6l2 1.5-2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<line x1="7" y1="9" x2="10" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>`
+      `<path d="M3.5 6l2 1.5-2 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
+      `<line x1="7" y1="9" x2="10" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>`,
   ),
   custom: svgIcon(
-    `<path d="M7 2l1.5 3H12l-2.5 2 1 3L7 8.5 3.5 10l1-3L2 5h3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
+    `<path d="M7 2l1.5 3H12l-2.5 2 1 3L7 8.5 3.5 10l1-3L2 5h3.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`,
   ),
 };
 
@@ -92,7 +92,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 export function loadOverrides(): Record<string, Partial<Preset>> {
   try {
     const stored = localStorage.getItem(OVERRIDES_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : {};
+    const parsed: unknown =
+      stored !== null && stored !== "" ? JSON.parse(stored) : {};
     if (!isRecord(parsed)) return {};
     const result: Record<string, Partial<Preset>> = {};
     for (const [id, ov] of Object.entries(parsed)) {
@@ -104,17 +105,21 @@ export function loadOverrides(): Record<string, Partial<Preset>> {
   }
 }
 
-export function saveOverrides(overrides: Record<string, Partial<Preset>>): void {
+export function saveOverrides(
+  overrides: Record<string, Partial<Preset>>,
+): void {
   localStorage.setItem(OVERRIDES_KEY, JSON.stringify(overrides));
 }
 
 export function loadCustomPresets(): Preset[] {
   try {
     const stored = localStorage.getItem(CUSTOM_KEY);
-    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    const parsed: unknown =
+      stored !== null && stored !== "" ? JSON.parse(stored) : [];
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (p): p is Preset => isRecord(p) && typeof p.id === "string" && typeof p.name === "string"
+      (p): p is Preset =>
+        isRecord(p) && typeof p.id === "string" && typeof p.name === "string",
     );
   } catch {
     return [];
@@ -162,7 +167,9 @@ export function resetPreset(id: string): void {
   saveOverrides(overrides);
 }
 
-export function addCustomPreset(preset: Omit<Preset, "id" | "builtin">): Preset {
+export function addCustomPreset(
+  preset: Omit<Preset, "id" | "builtin">,
+): Preset {
   const customs = loadCustomPresets();
   const newPreset: Preset = {
     ...preset,

@@ -1,11 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { spawn } from "child_process";
+import { mkdirSync } from "fs";
+import { connect } from "net";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Module mocks (hoisted before imports) ---
 
 vi.mock("caido:plugin", () => ({}));
 
 vi.mock("../utils", async () => {
-  const actual = await vi.importActual<typeof import("../utils")>("../utils");
+  const actual = await vi.importActual<typeof UtilsModule>("../utils");
   return {
     pathExists: vi.fn(),
     isDirectory: vi.fn(),
@@ -40,19 +44,17 @@ vi.mock("os", () => ({
 // --- Imports ---
 
 import { init } from "../index";
+import type * as UtilsModule from "../utils";
 import {
-  pathExists,
+  findPython3,
+  frameSend,
+  getDefaultShell,
   isDirectory,
   loadSettings,
+  pathExists,
   saveSettings,
-  findPython3,
-  getDefaultShell,
-  frameSend,
   writeFileAtomic,
 } from "../utils";
-import { spawn } from "child_process";
-import { connect } from "net";
-import { mkdirSync } from "fs";
 
 // --- Helpers ---
 
@@ -129,16 +131,17 @@ describe("Backend API handlers", () => {
         "validateDirectory",
       ];
       for (const name of expected) {
-        expect(handlers.has(name), `handler "${name}" should be registered`).toBe(
-          true
-        );
+        expect(
+          handlers.has(name),
+          `handler "${name}" should be registered`,
+        ).toBe(true);
       }
       expect(sdk.api.register).toHaveBeenCalledTimes(12);
     });
 
     it("should log initialization message", () => {
       expect(sdk.console.log).toHaveBeenCalledWith(
-        "ShadowShell backend initialized"
+        "ShadowShell backend initialized",
       );
     });
   });
@@ -194,7 +197,7 @@ describe("Backend API handlers", () => {
     it("should reject non-directory path", () => {
       vi.mocked(isDirectory).mockReturnValue(false);
       expect(handlers.get("setDefaultDirectory")!(sdk, "/not/a/dir")).toBe(
-        false
+        false,
       );
       expect(saveSettings).not.toHaveBeenCalled();
     });
@@ -210,7 +213,7 @@ describe("Backend API handlers", () => {
 
       const savedSettings = vi.mocked(saveSettings).mock.calls[0]?.[2];
       expect(savedSettings).toEqual(
-        expect.objectContaining({ defaultDirectory: "/test/dir" })
+        expect.objectContaining({ defaultDirectory: "/test/dir" }),
       );
     });
 
@@ -229,16 +232,16 @@ describe("Backend API handlers", () => {
     it("should save valid python path", () => {
       vi.mocked(pathExists).mockReturnValue(true);
       expect(
-        handlers.get("setPythonPath")!(sdk, "/usr/local/bin/python3")
+        handlers.get("setPythonPath")!(sdk, "/usr/local/bin/python3"),
       ).toBe(true);
       expect(saveSettings).toHaveBeenCalled();
     });
 
     it("should reject non-existent path", () => {
       vi.mocked(pathExists).mockReturnValue(false);
-      expect(
-        handlers.get("setPythonPath")!(sdk, "/nonexistent/python")
-      ).toBe(false);
+      expect(handlers.get("setPythonPath")!(sdk, "/nonexistent/python")).toBe(
+        false,
+      );
       expect(saveSettings).not.toHaveBeenCalled();
     });
 
@@ -263,7 +266,7 @@ describe("Backend API handlers", () => {
 
       const savedSettings = vi.mocked(saveSettings).mock.calls[0]?.[2];
       expect(savedSettings).toEqual(
-        expect.objectContaining({ pythonPath: "/custom/python3" })
+        expect.objectContaining({ pythonPath: "/custom/python3" }),
       );
     });
   });
@@ -332,7 +335,7 @@ describe("Backend API handlers", () => {
       handlers.get("createTerminal")!(sdk, "/custom/dir", "", "shell");
       expect(spawn).toHaveBeenCalledWith(
         expect.any(String),
-        expect.arrayContaining(["/custom/dir"])
+        expect.arrayContaining(["/custom/dir"]),
       );
     });
 
@@ -352,7 +355,7 @@ describe("Backend API handlers", () => {
   describe("writeTerminal", () => {
     it("should return false for non-existent terminal", () => {
       expect(handlers.get("writeTerminal")!(sdk, "nonexistent", "data")).toBe(
-        false
+        false,
       );
     });
 
@@ -365,9 +368,9 @@ describe("Backend API handlers", () => {
 
   describe("resizeTerminal", () => {
     it("should return false for non-existent terminal", () => {
-      expect(
-        handlers.get("resizeTerminal")!(sdk, "nonexistent", 80, 24)
-      ).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, "nonexistent", 80, 24)).toBe(
+        false,
+      );
     });
 
     it("should remember the size while the relay is still connecting", () => {
@@ -391,9 +394,8 @@ describe("Backend API handlers", () => {
     it("should kill the process", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const mockProc =
-        vi.mocked(spawn).mock.results[
-          vi.mocked(spawn).mock.results.length - 1
-        ]?.value;
+        vi.mocked(spawn).mock.results[vi.mocked(spawn).mock.results.length - 1]
+          ?.value;
 
       handlers.get("destroyTerminal")!(sdk, id);
       expect(mockProc.kill).toHaveBeenCalled();
@@ -402,17 +404,13 @@ describe("Backend API handlers", () => {
     it("should log destruction message", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       handlers.get("destroyTerminal")!(sdk, id);
-      expect(sdk.console.log).toHaveBeenCalledWith(
-        `Terminal destroyed: ${id}`
-      );
+      expect(sdk.console.log).toHaveBeenCalledWith(`Terminal destroyed: ${id}`);
     });
   });
 
   describe("destroyAllTerminals", () => {
     it("should handle empty state without error", () => {
-      expect(() =>
-        handlers.get("destroyAllTerminals")!(sdk)
-      ).not.toThrow();
+      expect(() => handlers.get("destroyAllTerminals")!(sdk)).not.toThrow();
     });
 
     it("should clear all terminals", () => {
@@ -444,21 +442,15 @@ describe("Backend API handlers", () => {
   }
 
   function getProcHandler(proc: any, event: string) {
-    return proc.on.mock.calls.find(
-      ([e]: [string]) => e === event
-    )?.[1];
+    return proc.on.mock.calls.find(([e]: [string]) => e === event)?.[1];
   }
 
   function getStdoutHandler(proc: any) {
-    return proc.stdout.on.mock.calls.find(
-      ([e]: [string]) => e === "data"
-    )?.[1];
+    return proc.stdout.on.mock.calls.find(([e]: [string]) => e === "data")?.[1];
   }
 
   function getStderrHandler(proc: any) {
-    return proc.stderr.on.mock.calls.find(
-      ([e]: [string]) => e === "data"
-    )?.[1];
+    return proc.stderr.on.mock.calls.find(([e]: [string]) => e === "data")?.[1];
   }
 
   function createMockSocket() {
@@ -470,9 +462,7 @@ describe("Backend API handlers", () => {
   }
 
   function getSocketHandler(sock: any, event: string) {
-    return sock.on.mock.calls.find(
-      ([e]: [string]) => e === event
-    )?.[1];
+    return sock.on.mock.calls.find(([e]: [string]) => e === event)?.[1];
   }
 
   // Sets up `connect()` so that the connect callback is captured rather than
@@ -481,7 +471,11 @@ describe("Backend API handlers", () => {
   // `connect()` has returned and `sock` is initialized.
   function deferredConnect(socket: ReturnType<typeof createMockSocket>) {
     const pending: Array<() => void> = [];
-    vi.mocked(connect).mockImplementation(((_port: number, _host: string, cb: () => void) => {
+    vi.mocked(connect).mockImplementation(((
+      _port: number,
+      _host: string,
+      cb: () => void,
+    ) => {
       if (cb) pending.push(cb);
       return socket;
     }) as any);
@@ -510,7 +504,9 @@ describe("Backend API handlers", () => {
       const exitHandler = getProcHandler(proc, "exit");
 
       exitHandler!(0);
-      expect(handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id)).toBeUndefined();
+      expect(
+        handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id),
+      ).toBeUndefined();
     });
 
     it("should use -1 as exit code when null is passed", () => {
@@ -544,7 +540,9 @@ describe("Backend API handlers", () => {
       expect(errorHandler).toBeDefined();
 
       errorHandler!(new Error("spawn failed"));
-      expect(handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id)).toBeUndefined();
+      expect(
+        handlers.get("listTerminals")!(sdk).find((t: any) => t.id === id),
+      ).toBeUndefined();
     });
 
     it("should log relay error message via console.log", () => {
@@ -554,7 +552,7 @@ describe("Backend API handlers", () => {
 
       errorHandler!(new Error("ENOENT"));
       expect(sdk.console.log).toHaveBeenCalledWith(
-        expect.stringContaining("[relay error] ENOENT")
+        expect.stringContaining("[relay error] ENOENT"),
       );
     });
 
@@ -566,7 +564,7 @@ describe("Backend API handlers", () => {
 
       stderrHandler!(Buffer.from("python traceback"));
       expect(sdk.console.log).toHaveBeenCalledWith(
-        expect.stringContaining("[relay stderr] python traceback")
+        expect.stringContaining("[relay stderr] python traceback"),
       );
     });
   });
@@ -574,7 +572,9 @@ describe("Backend API handlers", () => {
   describe("READY signal and socket connection", () => {
     it("should connect via TCP when stdout emits READY", () => {
       const mockSocket = createMockSocket();
-      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+      vi.mocked(connect).mockImplementation(
+        ((..._args: any[]) => mockSocket) as any,
+      );
 
       handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
@@ -584,7 +584,7 @@ describe("Backend API handlers", () => {
       expect(connect).toHaveBeenCalledWith(
         expect.any(Number),
         "127.0.0.1",
-        expect.any(Function)
+        expect.any(Function),
       );
     });
 
@@ -599,7 +599,9 @@ describe("Backend API handlers", () => {
 
     it("should buffer stdout chunks until READY arrives", () => {
       const mockSocket = createMockSocket();
-      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+      vi.mocked(connect).mockImplementation(
+        ((..._args: any[]) => mockSocket) as any,
+      );
 
       handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
@@ -616,7 +618,9 @@ describe("Backend API handlers", () => {
       // the token arrived, so any additional stdout chunk would re-trigger
       // connect() and leak sockets. Guard with the `connected` flag.
       const mockSocket = createMockSocket();
-      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+      vi.mocked(connect).mockImplementation(
+        ((..._args: any[]) => mockSocket) as any,
+      );
 
       handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
@@ -643,7 +647,7 @@ describe("Backend API handlers", () => {
       flush();
       expect(frameSend).toHaveBeenCalledWith(
         mockSocket,
-        expect.objectContaining({ type: "resize", cols: 80, rows: 24 })
+        expect.objectContaining({ type: "resize", cols: 80, rows: 24 }),
       );
     });
 
@@ -678,7 +682,12 @@ describe("Backend API handlers", () => {
         const mockSocket = createMockSocket();
         const flush = deferredConnect(mockSocket);
 
-        const id = handlers.get("createTerminal")!(sdk, "/home", "claude", "claude");
+        const id = handlers.get("createTerminal")!(
+          sdk,
+          "/home",
+          "claude",
+          "claude",
+        );
         const proc = lastSpawnedProc();
         const stdoutHandler = getStdoutHandler(proc);
 
@@ -751,7 +760,7 @@ describe("Backend API handlers", () => {
       errorHandler!(new Error("ECONNRESET"));
 
       expect(sdk.console.log).toHaveBeenCalledWith(
-        expect.stringContaining("[relay] socket error: ECONNRESET")
+        expect.stringContaining("[relay] socket error: ECONNRESET"),
       );
       expect(handlers.get("writeTerminal")!(sdk, id, "x")).toBe(false);
     });
@@ -774,7 +783,9 @@ describe("Backend API handlers", () => {
 
     it("should ignore READY when session is already terminating", () => {
       const mockSocket = createMockSocket();
-      vi.mocked(connect).mockImplementation(((..._args: any[]) => mockSocket) as any);
+      vi.mocked(connect).mockImplementation(
+        ((..._args: any[]) => mockSocket) as any,
+      );
 
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       handlers.get("destroyTerminal")!(sdk, id);
@@ -788,7 +799,10 @@ describe("Backend API handlers", () => {
   });
 
   describe("writeTerminal / resizeTerminal with connected socket", () => {
-    function createConnectedTerminal(): { id: string; socket: ReturnType<typeof createMockSocket> } {
+    function createConnectedTerminal(): {
+      id: string;
+      socket: ReturnType<typeof createMockSocket>;
+    } {
       const mockSocket = createMockSocket();
       const flush = deferredConnect(mockSocket);
 
@@ -857,8 +871,12 @@ describe("Backend API handlers", () => {
       expect(handlers.get("resizeTerminal")!(sdk, id, 0, 24)).toBe(false);
       expect(handlers.get("resizeTerminal")!(sdk, id, 80, 0)).toBe(false);
       expect(handlers.get("resizeTerminal")!(sdk, id, -1, 24)).toBe(false);
-      expect(handlers.get("resizeTerminal")!(sdk, id, Number.NaN, 24)).toBe(false);
-      expect(handlers.get("resizeTerminal")!(sdk, id, Infinity, 24)).toBe(false);
+      expect(handlers.get("resizeTerminal")!(sdk, id, Number.NaN, 24)).toBe(
+        false,
+      );
+      expect(handlers.get("resizeTerminal")!(sdk, id, Infinity, 24)).toBe(
+        false,
+      );
       expect(frameSend).not.toHaveBeenCalled();
     });
 
@@ -875,7 +893,12 @@ describe("Backend API handlers", () => {
     function startTerminal(command = "") {
       const mockSocket = createMockSocket();
       const flush = deferredConnect(mockSocket);
-      const id = handlers.get("createTerminal")!(sdk, "/home", command, "shell");
+      const id = handlers.get("createTerminal")!(
+        sdk,
+        "/home",
+        command,
+        "shell",
+      );
       const stdoutHandler = getStdoutHandler(lastSpawnedProc());
       return { id, mockSocket, flush, stdoutHandler };
     }
@@ -883,7 +906,11 @@ describe("Backend API handlers", () => {
     it("should connect to the port reported by the relay", () => {
       const { stdoutHandler } = startTerminal();
       stdoutHandler!(Buffer.from(`READY:41234:${TOKEN}\n`));
-      expect(connect).toHaveBeenCalledWith(41234, "127.0.0.1", expect.any(Function));
+      expect(connect).toHaveBeenCalledWith(
+        41234,
+        "127.0.0.1",
+        expect.any(Function),
+      );
     });
 
     it("should not connect until the full READY line (with token) has arrived", () => {
@@ -909,10 +936,14 @@ describe("Backend API handlers", () => {
       handlers.get("resizeTerminal")!(sdk, id, 132, 43);
       stdoutHandler!(Buffer.from(READY));
       flush();
-      expect(frameSend).toHaveBeenCalledWith(mockSocket, { type: "resize", cols: 132, rows: 43 });
+      expect(frameSend).toHaveBeenCalledWith(mockSocket, {
+        type: "resize",
+        cols: 132,
+        rows: 43,
+      });
       expect(frameSend).not.toHaveBeenCalledWith(
         mockSocket,
-        expect.objectContaining({ type: "resize", cols: 80, rows: 24 })
+        expect.objectContaining({ type: "resize", cols: 80, rows: 24 }),
       );
     });
 
@@ -922,8 +953,12 @@ describe("Backend API handlers", () => {
       handlers.get("writeTerminal")!(sdk, id, "s\r");
       stdoutHandler!(Buffer.from(READY));
       flush();
-      const inputs = vi.mocked(frameSend).mock.calls
-        .filter(([sock, msg]) => (sock as unknown) === mockSocket && msg.type === "input")
+      const inputs = vi
+        .mocked(frameSend)
+        .mock.calls.filter(
+          ([sock, msg]) =>
+            (sock as unknown) === mockSocket && msg.type === "input",
+        )
         .map(([, msg]) => msg.data);
       expect(inputs).toEqual(["l", "s\r"]);
     });
@@ -944,8 +979,11 @@ describe("Backend API handlers", () => {
       dataHandler(bytes.subarray(0, 4));
       dataHandler(bytes.subarray(4, 8));
       dataHandler(bytes.subarray(8));
-      const text = vi.mocked(sdk.api.send).mock.calls
-        .filter(([name, ev]) => name === "terminalOutput" && ev.terminalId === id)
+      const text = vi
+        .mocked(sdk.api.send)
+        .mock.calls.filter(
+          ([name, ev]) => name === "terminalOutput" && ev.terminalId === id,
+        )
         .map(([, ev]) => ev.data)
         .join("");
       expect(text).toBe("한글✓");
@@ -955,7 +993,10 @@ describe("Backend API handlers", () => {
       const id = handlers.get("createTerminal")!(sdk, "/home", "", "shell");
       const proc = lastSpawnedProc();
       getProcHandler(proc, "error")!(new Error("ENOENT"));
-      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", { terminalId: id, code: -1 });
+      expect(sdk.api.send).toHaveBeenCalledWith("terminalExit", {
+        terminalId: id,
+        code: -1,
+      });
     });
 
     it("should report terminalExit only once when both error and exit fire", () => {
@@ -963,7 +1004,9 @@ describe("Backend API handlers", () => {
       const proc = lastSpawnedProc();
       getProcHandler(proc, "error")!(new Error("boom"));
       getProcHandler(proc, "exit")!(1);
-      const exits = vi.mocked(sdk.api.send).mock.calls.filter(([name]) => name === "terminalExit");
+      const exits = vi
+        .mocked(sdk.api.send)
+        .mock.calls.filter(([name]) => name === "terminalExit");
       expect(exits).toHaveLength(1);
     });
 
@@ -980,7 +1023,7 @@ describe("Backend API handlers", () => {
       expect(writeFileAtomic).toHaveBeenCalledTimes(1);
       expect(writeFileAtomic).toHaveBeenCalledWith(
         "/home/testuser/.config/shadowshell/relay.py",
-        expect.stringContaining("ShadowShell PTY relay")
+        expect.stringContaining("ShadowShell PTY relay"),
       );
       freshSdk._handlers.get("destroyAllTerminals")!(freshSdk);
     });
@@ -1018,7 +1061,9 @@ describe("Backend API handlers", () => {
       create(freshSdk, "/b", "", "s");
       // A cached path could be removed by a tmp reaper and recreated by
       // another local user; pathExists (mocked to true) would then trust it.
-      const scripts = vi.mocked(spawn).mock.calls.map((call) => (call[1] as string[])[0]);
+      const scripts = vi
+        .mocked(spawn)
+        .mock.calls.map((call) => (call[1] as string[])[0]);
       expect(scripts).toHaveLength(2);
       expect(scripts[0]).toMatch(/^\/tmp\/shadowshell-[^/]+\/relay\.py$/);
       expect(scripts[1]).not.toBe(scripts[0]);
@@ -1045,7 +1090,7 @@ describe("Backend API handlers", () => {
       // Non-recursive, so it fails instead of reusing what is already there.
       expect(mkdirSync).toHaveBeenCalledWith(
         expect.stringMatching(/^\/tmp\/shadowshell-[^/]+$/),
-        { mode: 0o700 }
+        { mode: 0o700 },
       );
       expect(writeFileAtomic).toHaveBeenCalledTimes(1);
       expect(spawn).not.toHaveBeenCalled();
@@ -1085,8 +1130,11 @@ describe("Backend API handlers", () => {
       flush();
       getSocketHandler(mockSocket, "data")!(Buffer.from([0x61, 0xe2]));
       getSocketHandler(mockSocket, "close")!();
-      const text = vi.mocked(sdk.api.send).mock.calls
-        .filter(([name, ev]) => name === "terminalOutput" && ev.terminalId === id)
+      const text = vi
+        .mocked(sdk.api.send)
+        .mock.calls.filter(
+          ([name, ev]) => name === "terminalOutput" && ev.terminalId === id,
+        )
         .map(([, ev]) => ev.data)
         .join("");
       expect(text).toBe("a\uFFFD");

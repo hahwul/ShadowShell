@@ -7,7 +7,12 @@ export function escapeHtml(str: string): string {
 }
 
 export function escapeAttr(str: string): string {
-  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export function sanitizeColor(color: string): string {
@@ -19,7 +24,14 @@ export function sanitizeColor(color: string): string {
 export function toColorInputValue(color: string): string {
   const hex = sanitizeColor(color).slice(1).toLowerCase();
   if (hex.length === 3 || hex.length === 4) {
-    return "#" + hex.slice(0, 3).split("").map((c) => c + c).join("");
+    return (
+      "#" +
+      hex
+        .slice(0, 3)
+        .split("")
+        .map((c) => c + c)
+        .join("")
+    );
   }
   if (hex.length === 6 || hex.length === 8) return "#" + hex.slice(0, 6);
   return "#6b7280";
@@ -28,7 +40,11 @@ export function toColorInputValue(color: string): string {
 export function sanitizeSvgIcon(icon: string): string {
   if (!icon || typeof icon !== "string") return ICONS.custom;
   // Only allow SVG tags, reject anything with event handlers or scripts
-  if (/on\w+\s*=/i.test(icon) || /<script/i.test(icon) || /javascript:/i.test(icon)) {
+  if (
+    /on\w+\s*=/i.test(icon) ||
+    /<script/i.test(icon) ||
+    /javascript:/i.test(icon)
+  ) {
     return ICONS.custom;
   }
   const div = document.createElement("div");

@@ -1,16 +1,26 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { join } from "path";
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from "fs";
-import { tmpdir } from "os";
 import {
-  pathExists,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  findPython3,
+  frameSend,
+  generateId,
+  getDefaultShell,
   isDirectory,
   loadSettings,
+  pathExists,
   saveSettings,
-  findPython3,
-  getDefaultShell,
-  generateId,
-  frameSend,
   splitUtf8Tail,
   writeFileAtomic,
 } from "../utils";
@@ -75,8 +85,13 @@ describe("loadSettings", () => {
 
   it("should parse valid JSON settings file", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/usr/bin/python3" }));
-    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({ pythonPath: "/usr/bin/python3" });
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({ pythonPath: "/usr/bin/python3" }),
+    );
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({
+      pythonPath: "/usr/bin/python3",
+    });
   });
 
   it("should return empty object for invalid JSON", () => {
@@ -121,13 +136,18 @@ describe("saveSettings", () => {
 
 describe("findPython3", () => {
   it("should return cached path when provided", () => {
-    expect(findPython3("/cached/python3", "/nonexistent/settings.json")).toBe("/cached/python3");
+    expect(findPython3("/cached/python3", "/nonexistent/settings.json")).toBe(
+      "/cached/python3",
+    );
   });
 
   it("should try settings file when no cached path", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
     // Point settings to a path that exists (use this test file as a stand-in)
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: __filename }));
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({ pythonPath: __filename }),
+    );
     const result = findPython3(null, TEST_SETTINGS_FILE);
     expect(result).toBe(__filename);
   });
@@ -140,7 +160,10 @@ describe("findPython3", () => {
 
   it("should skip settings path when it points to non-existent file", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/nonexistent/python3" }));
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({ pythonPath: "/nonexistent/python3" }),
+    );
     const result = findPython3(null, TEST_SETTINGS_FILE);
     // Should not return the invalid settings path — falls back to system paths
     expect(result).not.toBe("/nonexistent/python3");
@@ -277,10 +300,17 @@ describe("frameSend", () => {
   it("should handle nested objects and arrays", () => {
     const chunks: Buffer[] = [];
     const mockSocket = {
-      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+      write: vi.fn((data: Buffer) => {
+        chunks.push(data);
+        return true;
+      }),
     } as any;
 
-    const payload = { type: "input", data: "test", meta: { nested: [1, 2, 3] } };
+    const payload = {
+      type: "input",
+      data: "test",
+      meta: { nested: [1, 2, 3] },
+    };
     frameSend(mockSocket, payload);
     const written = chunks[0]!;
     const parsed = JSON.parse(written.subarray(4).toString("utf-8"));
@@ -290,7 +320,10 @@ describe("frameSend", () => {
   it("should produce correct header for large payloads", () => {
     const chunks: Buffer[] = [];
     const mockSocket = {
-      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+      write: vi.fn((data: Buffer) => {
+        chunks.push(data);
+        return true;
+      }),
     } as any;
 
     const largeData = "x".repeat(100000);
@@ -304,13 +337,16 @@ describe("frameSend", () => {
   it("should handle special characters in data", () => {
     const chunks: Buffer[] = [];
     const mockSocket = {
-      write: vi.fn((data: Buffer) => { chunks.push(data); return true; }),
+      write: vi.fn((data: Buffer) => {
+        chunks.push(data);
+        return true;
+      }),
     } as any;
 
-    frameSend(mockSocket, { type: "input", data: "\n\t\r\0\\\"" });
+    frameSend(mockSocket, { type: "input", data: '\n\t\r\0\\"' });
     const written = chunks[0]!;
     const parsed = JSON.parse(written.subarray(4).toString("utf-8"));
-    expect(parsed.data).toBe("\n\t\r\0\\\"");
+    expect(parsed.data).toBe('\n\t\r\0\\"');
   });
 });
 
@@ -421,7 +457,11 @@ describe("saveSettings + loadSettings round-trip edge cases", () => {
   it("should handle settings with multiple keys", () => {
     const dir = join(TEST_DIR, "multi");
     const file = join(dir, "settings.json");
-    const settings = { pythonPath: "/usr/bin/python3", theme: "dark", port: 8080 };
+    const settings = {
+      pythonPath: "/usr/bin/python3",
+      theme: "dark",
+      port: 8080,
+    };
     saveSettings(dir, file, settings as any);
     expect(loadSettings(file)).toEqual(settings);
   });
@@ -455,13 +495,24 @@ describe("isDirectory", () => {
 describe("loadSettings with defaultDirectory", () => {
   it("should load defaultDirectory from settings file", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ defaultDirectory: "/tmp" }));
-    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({ defaultDirectory: "/tmp" });
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({ defaultDirectory: "/tmp" }),
+    );
+    expect(loadSettings(TEST_SETTINGS_FILE)).toEqual({
+      defaultDirectory: "/tmp",
+    });
   });
 
   it("should load both pythonPath and defaultDirectory", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/usr/bin/python3", defaultDirectory: "/home/user" }));
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({
+        pythonPath: "/usr/bin/python3",
+        defaultDirectory: "/home/user",
+      }),
+    );
     const settings = loadSettings(TEST_SETTINGS_FILE);
     expect(settings.pythonPath).toBe("/usr/bin/python3");
     expect(settings.defaultDirectory).toBe("/home/user");
@@ -469,7 +520,10 @@ describe("loadSettings with defaultDirectory", () => {
 
   it("should return undefined defaultDirectory when not set", () => {
     mkdirSync(TEST_SETTINGS_DIR, { recursive: true });
-    writeFileSync(TEST_SETTINGS_FILE, JSON.stringify({ pythonPath: "/usr/bin/python3" }));
+    writeFileSync(
+      TEST_SETTINGS_FILE,
+      JSON.stringify({ pythonPath: "/usr/bin/python3" }),
+    );
     expect(loadSettings(TEST_SETTINGS_FILE).defaultDirectory).toBeUndefined();
   });
 });
@@ -479,13 +533,18 @@ describe("saveSettings with defaultDirectory", () => {
     const dir = join(TEST_DIR, "dirsettings");
     const file = join(dir, "settings.json");
     saveSettings(dir, file, { defaultDirectory: "/home/user/projects" });
-    expect(loadSettings(file)).toEqual({ defaultDirectory: "/home/user/projects" });
+    expect(loadSettings(file)).toEqual({
+      defaultDirectory: "/home/user/projects",
+    });
   });
 
   it("should persist both fields together", () => {
     const dir = join(TEST_DIR, "bothsettings");
     const file = join(dir, "settings.json");
-    saveSettings(dir, file, { pythonPath: "/usr/bin/python3", defaultDirectory: "/tmp" });
+    saveSettings(dir, file, {
+      pythonPath: "/usr/bin/python3",
+      defaultDirectory: "/tmp",
+    });
     const result = loadSettings(file);
     expect(result.pythonPath).toBe("/usr/bin/python3");
     expect(result.defaultDirectory).toBe("/tmp");

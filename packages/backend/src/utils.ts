@@ -1,6 +1,13 @@
-import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, rmSync } from "fs";
-import { platform } from "os";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import type { Socket } from "net";
+import { platform } from "os";
 
 export function pathExists(p: string): boolean {
   try {
@@ -19,11 +26,15 @@ export function isDirectory(p: string): boolean {
   }
 }
 
-export function loadSettings(settingsFile: string): { pythonPath?: string; defaultDirectory?: string } {
+export function loadSettings(settingsFile: string): {
+  pythonPath?: string;
+  defaultDirectory?: string;
+} {
   try {
     const data = readFileSync(settingsFile, "utf-8");
     const parsed = JSON.parse(data);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+      return {};
     return parsed;
   } catch {
     return {};
@@ -33,33 +44,43 @@ export function loadSettings(settingsFile: string): { pythonPath?: string; defau
 export function saveSettings(
   settingsDir: string,
   settingsFile: string,
-  settings: Record<string, unknown>
+  settings: Record<string, unknown>,
 ): void {
-  if (!pathExists(settingsDir)) mkdirSync(settingsDir, { recursive: true, mode: 0o700 });
+  if (!pathExists(settingsDir))
+    mkdirSync(settingsDir, { recursive: true, mode: 0o700 });
   writeFileAtomic(settingsFile, JSON.stringify(settings, null, 2));
 }
 
 // Atomic write: write to a temp file, then rename. Avoids a torn file if the
 // process crashes mid-write, and readers never observe a truncated file.
-export function writeFileAtomic(file: string, content: string, mode = 0o600): void {
+export function writeFileAtomic(
+  file: string,
+  content: string,
+  mode = 0o600,
+): void {
   // No pid: Caido's backend runtime has no global `process`.
   const tmp = `${file}.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     writeFileSync(tmp, content, { mode });
     renameSync(tmp, file);
   } catch (err) {
-    try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* ignore */
+    }
     throw err;
   }
 }
 
 export function findPython3(
   cachedPath: string | null,
-  settingsFile: string
+  settingsFile: string,
 ): string {
-  if (cachedPath) return cachedPath;
+  if (cachedPath !== null && cachedPath !== "") return cachedPath;
   const saved = loadSettings(settingsFile).pythonPath;
-  if (saved && pathExists(saved)) return saved;
+  if (typeof saved === "string" && saved !== "" && pathExists(saved))
+    return saved;
   for (const p of [
     "/usr/bin/python3",
     "/usr/local/bin/python3",
@@ -82,10 +103,7 @@ export function generateId(counter: number): string {
   return `term-${counter}-${Date.now()}`;
 }
 
-export function frameSend(
-  sock: Socket,
-  obj: Record<string, unknown>
-): boolean {
+export function frameSend(sock: Socket, obj: Record<string, unknown>): boolean {
   try {
     const payload = Buffer.from(JSON.stringify(obj), "utf-8");
     const header = Buffer.alloc(4);

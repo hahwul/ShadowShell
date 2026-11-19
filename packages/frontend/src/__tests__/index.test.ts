@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Module mocks (hoisted before imports) ---
 
@@ -9,13 +9,23 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 vi.mock("../styles/style.css", () => ({}));
 
 // Every xterm instance the module creates, newest last.
-const xterms = vi.hoisted(() => [] as Array<{ type(data: string): void; writeln: ReturnType<typeof vi.fn> }>);
+const xterms = vi.hoisted(
+  () =>
+    [] as Array<{
+      type(data: string): void;
+      writeln: ReturnType<typeof vi.fn>;
+    }>,
+);
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
-    constructor() { xterms.push(this as any); }
+    constructor() {
+      xterms.push(this as any);
+    }
     private dataHandler: (data: string) => void = () => {};
-    type(data: string) { this.dataHandler(data); }
+    type(data: string) {
+      this.dataHandler(data);
+    }
     options: Record<string, unknown> = {};
     cols = 80;
     rows = 24;
@@ -26,19 +36,32 @@ vi.mock("@xterm/xterm", () => ({
       this.element.appendChild(this.textarea);
       parent.appendChild(this.element);
     }
-    focus() { this.textarea.focus(); }
-    blur() { this.textarea.blur(); }
+    focus() {
+      this.textarea.focus();
+    }
+    blur() {
+      this.textarea.blur();
+    }
     loadAddon() {}
-    onData(handler: (data: string) => void) { this.dataHandler = handler; }
+    onData(handler: (data: string) => void) {
+      this.dataHandler = handler;
+    }
     write() {}
     writeln = vi.fn();
     clear() {}
     dispose() {}
   },
 }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    fit() {}
+  },
+}));
 vi.mock("@xterm/addon-search", () => ({
-  SearchAddon: class { findNext() {} findPrevious() {} },
+  SearchAddon: class {
+    findNext() {}
+    findPrevious() {}
+  },
 }));
 
 // --- Helpers ---
@@ -92,10 +115,15 @@ describe("Frontend UI", () => {
       setItem: (key: string, value: string) => store.set(key, value),
     });
     resizeObservers.length = 0;
-    vi.stubGlobal("ResizeObserver", class {
-      constructor(notify: () => void) { resizeObservers.push(notify); }
-      observe() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(notify: () => void) {
+          resizeObservers.push(notify);
+        }
+        observe() {}
+      },
+    );
 
     sdk = createMockSdk();
     (await import("../index")).init(sdk as any);
@@ -117,7 +145,9 @@ describe("Frontend UI", () => {
       expect(hasFocus()).toBe(true);
 
       run("shadowshell.toggle-dropup");
-      expect($(".ss-dropup").classList.contains("ss-dropup--visible")).toBe(false);
+      expect($(".ss-dropup").classList.contains("ss-dropup--visible")).toBe(
+        false,
+      );
       expect(hasFocus()).toBe(false);
     });
 
@@ -140,7 +170,11 @@ describe("Frontend UI", () => {
 
     it("should save once when Save is clicked again while the directory is validated", async () => {
       let resolve!: (valid: boolean) => void;
-      sdk.backend.validateDirectory.mockReturnValue(new Promise((r) => { resolve = r; }));
+      sdk.backend.validateDirectory.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
       openNewPresetEditor();
       $("[data-action=save]").click();
       $("[data-action=save]").click();
@@ -151,7 +185,11 @@ describe("Frontend UI", () => {
 
     it("should not save if cancelled while the directory is validated", async () => {
       let resolve!: (valid: boolean) => void;
-      sdk.backend.validateDirectory.mockReturnValue(new Promise((r) => { resolve = r; }));
+      sdk.backend.validateDirectory.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
       openNewPresetEditor();
       $("[data-action=save]").click();
       $("[data-action=cancel]").click();
@@ -178,7 +216,8 @@ describe("Frontend UI", () => {
   });
 
   describe("terminal sessions", () => {
-    const owned = () => JSON.parse(sessionStorage.getItem("shadowshell.terminals") ?? "[]");
+    const owned = () =>
+      JSON.parse(sessionStorage.getItem("shadowshell.terminals") ?? "[]");
 
     it("should send input in order, one backend call at a time", async () => {
       await run("shadowshell.new-tab");
@@ -196,7 +235,10 @@ describe("Frontend UI", () => {
 
       done[0]!();
       await vi.advanceTimersByTimeAsync(0);
-      expect(sdk.backend.writeTerminal.mock.calls).toEqual([["term-1", "a"], ["term-1", "bc"]]);
+      expect(sdk.backend.writeTerminal.mock.calls).toEqual([
+        ["term-1", "a"],
+        ["term-1", "bc"],
+      ]);
     });
 
     it("should stop this window's shells on unload, and finish the job after a reload", async () => {
@@ -244,12 +286,20 @@ describe("Frontend UI", () => {
       term.type("c");
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(sdk.backend.writeTerminal.mock.calls).toEqual([["term-1", "a"], ["term-1", "b"], ["term-1", "c"]]);
+      expect(sdk.backend.writeTerminal.mock.calls).toEqual([
+        ["term-1", "a"],
+        ["term-1", "b"],
+        ["term-1", "c"],
+      ]);
     });
 
     it("should send what was typed while the quick terminal was starting, in one ordered call", async () => {
       let reply!: (id: string) => void;
-      sdk.backend.createTerminal.mockReturnValue(new Promise((r) => { reply = r; }));
+      sdk.backend.createTerminal.mockReturnValue(
+        new Promise((r) => {
+          reply = r;
+        }),
+      );
       run("shadowshell.toggle-dropup");
       await vi.advanceTimersByTimeAsync(0);
 
@@ -263,8 +313,12 @@ describe("Frontend UI", () => {
     });
 
     it("should send resizes one at a time and finish on the latest size", async () => {
-      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800);
-      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(
+        800,
+      );
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
+        600,
+      );
       await run("shadowshell.new-tab");
       await vi.advanceTimersByTimeAsync(100);
       sdk.backend.resizeTerminal.mockClear();
@@ -279,17 +333,26 @@ describe("Frontend UI", () => {
         resizeObservers.forEach((notify) => notify());
       }
       // 110 overtaking 120 would leave the PTY at the wrong width for good.
-      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([["term-1", 100, 24]]);
+      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([
+        ["term-1", 100, 24],
+      ]);
 
       done[0]!();
       await vi.advanceTimersByTimeAsync(0);
-      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([["term-1", 100, 24], ["term-1", 120, 24]]);
+      expect(sdk.backend.resizeTerminal.mock.calls).toEqual([
+        ["term-1", 100, 24],
+        ["term-1", 120, 24],
+      ]);
       vi.restoreAllMocks();
     });
 
     it("should report an exit that arrives before the terminal id is known", async () => {
       let reply!: (id: string) => void;
-      sdk.backend.createTerminal.mockReturnValue(new Promise((r) => { reply = r; }));
+      sdk.backend.createTerminal.mockReturnValue(
+        new Promise((r) => {
+          reply = r;
+        }),
+      );
       const opening = run("shadowshell.new-tab");
       await vi.advanceTimersByTimeAsync(0);
 
@@ -298,7 +361,9 @@ describe("Frontend UI", () => {
       reply("term-9");
       await opening;
 
-      expect(xterms.at(-1)!.writeln).toHaveBeenCalledWith(expect.stringContaining("exited with code -1"));
+      expect(xterms.at(-1)!.writeln).toHaveBeenCalledWith(
+        expect.stringContaining("exited with code -1"),
+      );
       xterms.at(-1)!.type("x");
       expect(sdk.backend.writeTerminal).not.toHaveBeenCalled();
       // Not ours to stop on unload either: it is already gone.

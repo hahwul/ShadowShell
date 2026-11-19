@@ -1,14 +1,21 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect } from "vitest";
-import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon, toColorInputValue } from "../helpers";
+import { describe, expect, it } from "vitest";
+
+import {
+  escapeAttr,
+  escapeHtml,
+  sanitizeColor,
+  sanitizeSvgIcon,
+  toColorInputValue,
+} from "../helpers";
 import { ICONS } from "../presets";
 
 describe("escapeHtml", () => {
   it("should escape HTML entities", () => {
     expect(escapeHtml("<script>alert('xss')</script>")).toBe(
-      "&lt;script&gt;alert('xss')&lt;/script&gt;"
+      "&lt;script&gt;alert('xss')&lt;/script&gt;",
     );
   });
 
@@ -183,7 +190,8 @@ describe("sanitizeColor", () => {
 
 describe("sanitizeSvgIcon", () => {
   it("should accept valid SVG icon", () => {
-    const svg = '<svg width="14" height="14"><circle cx="7" cy="7" r="5"/></svg>';
+    const svg =
+      '<svg width="14" height="14"><circle cx="7" cy="7" r="5"/></svg>';
     expect(sanitizeSvgIcon(svg)).toBe(svg);
   });
 
@@ -211,7 +219,7 @@ describe("sanitizeSvgIcon", () => {
   });
 
   it("should reject content with script tags", () => {
-    const malicious = '<svg><script>alert(1)</script></svg>';
+    const malicious = "<svg><script>alert(1)</script></svg>";
     expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
   });
 
@@ -232,7 +240,8 @@ describe("sanitizeSvgIcon", () => {
   });
 
   it("should reject SVG with data: URI in href", () => {
-    const malicious = '<svg><a href="data:text/html,<script>alert(1)</script>"><circle/></a></svg>';
+    const malicious =
+      '<svg><a href="data:text/html,<script>alert(1)</script>"><circle/></a></svg>';
     // data: URIs are not blocked by current implementation — documenting behavior
     const result = sanitizeSvgIcon(malicious);
     // At minimum, script tag inside data: should trigger script detection
@@ -240,7 +249,8 @@ describe("sanitizeSvgIcon", () => {
   });
 
   it("should reject SVG with foreignObject containing HTML", () => {
-    const malicious = '<svg><foreignObject><body xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></body></foreignObject></svg>';
+    const malicious =
+      '<svg><foreignObject><body xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></body></foreignObject></svg>';
     expect(sanitizeSvgIcon(malicious)).toBe(ICONS.custom);
   });
 
@@ -270,14 +280,16 @@ describe("sanitizeSvgIcon", () => {
   });
 
   it("should not block SVG set/animate attribute injection (known limitation)", () => {
-    const malicious = '<svg><set attributeName="onmouseover" to="alert(1)"/></svg>';
+    const malicious =
+      '<svg><set attributeName="onmouseover" to="alert(1)"/></svg>';
     // Known gap: <set attributeName="onmouseover"> doesn't match on\w+= regex
     // since the event handler name is in an attribute value, not as an attribute itself.
     expect(sanitizeSvgIcon(malicious)).not.toBe(ICONS.custom);
   });
 
   it("should accept complex valid SVG with paths and transforms", () => {
-    const valid = '<svg width="14" height="14" viewBox="0 0 14 14"><g transform="translate(1,1)"><path d="M0 0L12 0L12 12L0 12Z" stroke="currentColor" fill="none"/><circle cx="6" cy="6" r="3" fill="currentColor"/></g></svg>';
+    const valid =
+      '<svg width="14" height="14" viewBox="0 0 14 14"><g transform="translate(1,1)"><path d="M0 0L12 0L12 12L0 12Z" stroke="currentColor" fill="none"/><circle cx="6" cy="6" r="3" fill="currentColor"/></g></svg>';
     expect(sanitizeSvgIcon(valid)).toBe(valid);
   });
 });

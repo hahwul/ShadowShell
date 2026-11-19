@@ -1,17 +1,19 @@
-import { spawn, type ChildProcess } from "child_process";
-import { homedir, platform, tmpdir } from "os";
+import { type ChildProcess, spawn } from "child_process";
 import { mkdirSync } from "fs";
-import { join } from "path";
 import { connect, type Socket } from "net";
-import { SDK, DefineAPI, DefineEvents } from "caido:plugin";
+import { homedir, platform, tmpdir } from "os";
+import { join } from "path";
+
+import { type DefineAPI, type DefineEvents, type SDK } from "caido:plugin";
+
 import {
-  pathExists,
-  isDirectory,
+  findPython3 as _findPython3,
   loadSettings as _loadSettings,
   saveSettings as _saveSettings,
-  findPython3 as _findPython3,
-  getDefaultShell,
   frameSend,
+  getDefaultShell,
+  isDirectory,
+  pathExists,
   splitUtf8Tail,
   writeFileAtomic,
 } from "./utils";
@@ -425,7 +427,7 @@ function saveSettings(settings: Record<string, unknown>): void {
 }
 
 function findPython3Local(): string {
-  if (pythonPath) return pythonPath;
+  if (pythonPath !== null && pythonPath !== "") return pythonPath;
   const result = _findPython3(null, SETTINGS_FILE);
   pythonPath = result;
   return result;
@@ -441,7 +443,12 @@ function ensureRelayScript(): string {
   // truncated script. Prefer the user's private config directory over a shared
   // temp directory another local user could tamper with; fall back to the temp
   // directory when HOME is missing or read-only so terminals still work.
-  if (relayScriptPath && pathExists(relayScriptPath)) return relayScriptPath;
+  if (
+    relayScriptPath !== null &&
+    relayScriptPath !== "" &&
+    pathExists(relayScriptPath)
+  )
+    return relayScriptPath;
   let lastError: unknown;
   for (const useTemp of [false, true]) {
     try {
@@ -450,7 +457,10 @@ function ensureRelayScript(): string {
         // Never adopt an existing directory here: another local user could
         // have pre-created a fixed name and would then be able to swap the
         // script we execute. A non-recursive mkdir fails if the path exists.
-        dir = join(tmpdir(), `shadowshell-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        dir = join(
+          tmpdir(),
+          `shadowshell-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        );
         mkdirSync(dir, { mode: 0o700 });
       } else if (!pathExists(dir)) {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -474,7 +484,7 @@ function createTerminal(
   sdk: SDK<API, BackendEvents>,
   cwd: string,
   command: string,
-  presetName: string
+  presetName: string,
 ): string {
   const id = generateId();
   const shell = getDefaultShell();
@@ -482,7 +492,11 @@ function createTerminal(
   const workingDir = cwd || home;
   const scriptPath = ensureRelayScript();
 
-  const proc = spawn(findPython3Local(), [scriptPath, shell, workingDir]);
+  const proc: ChildProcess = spawn(findPython3Local(), [
+    scriptPath,
+    shell,
+    workingDir,
+  ]);
 
   const session: TerminalSession = {
     id,
@@ -536,7 +550,10 @@ function createTerminal(
         if (command) {
           setTimeout(() => {
             if (!session.isTerminating && session.socket) {
-              frameSend(session.socket, { type: "input", data: command + "\n" });
+              frameSend(session.socket, {
+                type: "input",
+                data: command + "\n",
+              });
             }
           }, 500);
         }
@@ -546,7 +563,9 @@ function createTerminal(
       // on its own corrupts multi-byte characters split by TCP.
       let carry: Buffer | null = null;
       sock.on("data", (chunk: Buffer) => {
-        const [complete, rest] = splitUtf8Tail(carry ? Buffer.concat([carry, chunk]) : chunk);
+        const [complete, rest] = splitUtf8Tail(
+          carry ? Buffer.concat([carry, chunk]) : chunk,
+        );
         carry = rest.length ? rest : null;
         if (complete.length === 0) return;
         // Raw PTY output -> forward to frontend
@@ -559,7 +578,10 @@ function createTerminal(
       const onDisconnect = () => {
         if (carry) {
           // Emit a dangling partial sequence (as U+FFFD) rather than drop it.
-          sdk.api.send("terminalOutput", { terminalId: id, data: carry.toString("utf-8") });
+          sdk.api.send("terminalOutput", {
+            terminalId: id,
+            data: carry.toString("utf-8"),
+          });
           carry = null;
         }
         session.socket = null;
@@ -567,7 +589,11 @@ function createTerminal(
       };
       const killRelay = () => {
         if (!session.exited) {
-          try { proc.kill(); } catch { /* ignore */ }
+          try {
+            proc.kill();
+          } catch {
+            /* ignore */
+          }
         }
       };
 
@@ -618,7 +644,7 @@ function createTerminal(
 function writeTerminal(
   sdk: SDK<API, BackendEvents>,
   terminalId: string,
-  data: string
+  data: string,
 ): boolean {
   const session = terminals.get(terminalId);
   if (!session || session.isTerminating || session.closed) return false;
@@ -635,13 +661,14 @@ function resizeTerminal(
   sdk: SDK<API, BackendEvents>,
   terminalId: string,
   cols: number,
-  rows: number
+  rows: number,
 ): boolean {
   const session = terminals.get(terminalId);
   if (!session || session.isTerminating || session.closed) return false;
   const c = Math.floor(cols);
   const r = Math.floor(rows);
-  if (!Number.isFinite(c) || !Number.isFinite(r) || c < 1 || r < 1) return false;
+  if (!Number.isFinite(c) || !Number.isFinite(r) || c < 1 || r < 1)
+    return false;
   // Remember the size even before the socket is up; otherwise a resize that
   // races the relay startup is lost and the PTY stays at 80x24.
   session.size = { cols: c, rows: r };
@@ -651,15 +678,23 @@ function resizeTerminal(
 
 function destroyTerminal(
   sdk: SDK<API, BackendEvents>,
-  terminalId: string
+  terminalId: string,
 ): boolean {
   const session = terminals.get(terminalId);
   if (!session) return false;
   session.isTerminating = true;
   if (session.socket) {
-    try { session.socket.destroy(); } catch { /* ignore */ }
+    try {
+      session.socket.destroy();
+    } catch {
+      /* ignore */
+    }
   }
-  try { session.process.kill(); } catch { /* ignore */ }
+  try {
+    session.process.kill();
+  } catch {
+    /* ignore */
+  }
   terminals.delete(terminalId);
   sdk.console.log(`Terminal destroyed: ${terminalId}`);
   return true;
@@ -669,15 +704,23 @@ function destroyAllTerminals(sdk: SDK<API, BackendEvents>): void {
   for (const [, session] of terminals) {
     session.isTerminating = true;
     if (session.socket) {
-      try { session.socket.destroy(); } catch { /* ignore */ }
+      try {
+        session.socket.destroy();
+      } catch {
+        /* ignore */
+      }
     }
-    try { session.process.kill(); } catch { /* ignore */ }
+    try {
+      session.process.kill();
+    } catch {
+      /* ignore */
+    }
   }
   terminals.clear();
 }
 
 function listTerminals(
-  sdk: SDK<API, BackendEvents>
+  sdk: SDK<API, BackendEvents>,
 ): Array<{ id: string; cwd: string; presetName: string }> {
   return Array.from(terminals.values()).map((s) => ({
     id: s.id,
@@ -716,7 +759,10 @@ function getPythonPath(sdk: SDK<API, BackendEvents>): string {
   return findPython3Local();
 }
 
-function setDefaultDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
+function setDefaultDirectory(
+  sdk: SDK<API, BackendEvents>,
+  path: string,
+): boolean {
   if (path && !isDirectory(path)) return false;
   const settings = loadSettings();
   if (path) {
@@ -730,11 +776,15 @@ function setDefaultDirectory(sdk: SDK<API, BackendEvents>, path: string): boolea
 }
 
 function getDefaultDirectory(sdk: SDK<API, BackendEvents>): string {
-  const settings = loadSettings();
-  return settings.defaultDirectory || "";
+  // typeof: settings.json is hand-editable and not validated on load
+  const dir = loadSettings().defaultDirectory;
+  return typeof dir === "string" ? dir : "";
 }
 
-function validateDirectory(sdk: SDK<API, BackendEvents>, path: string): boolean {
+function validateDirectory(
+  sdk: SDK<API, BackendEvents>,
+  path: string,
+): boolean {
   if (!path) return true;
   return isDirectory(path);
 }

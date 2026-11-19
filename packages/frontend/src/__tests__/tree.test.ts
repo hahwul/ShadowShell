@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+
 import {
   findPaneById,
   getAllPanes,
-  replaceLeaf,
-  removePaneFromTree,
-  type PaneNode,
   type LeafNode,
+  type PaneNode,
+  removePaneFromTree,
+  replaceLeaf,
   type SplitNode,
 } from "../tree";
 
@@ -17,7 +18,7 @@ function split(
   direction: "horizontal" | "vertical",
   first: PaneNode,
   second: PaneNode,
-  ratio = 0.5
+  ratio = 0.5,
 ): SplitNode {
   return { type: "split", direction, ratio, first, second };
 }
@@ -49,7 +50,7 @@ describe("findPaneById", () => {
     const tree = split(
       "horizontal",
       split("vertical", leaf("a"), leaf("b")),
-      split("vertical", leaf("c"), leaf("d"))
+      split("vertical", leaf("c"), leaf("d")),
     );
     expect(findPaneById(tree, "d")).toEqual({ id: "d" });
   });
@@ -78,7 +79,7 @@ describe("getAllPanes", () => {
     const tree = split(
       "horizontal",
       split("vertical", leaf("a"), leaf("b")),
-      split("vertical", leaf("c"), leaf("d"))
+      split("vertical", leaf("c"), leaf("d")),
     );
     expect(getAllPanes(tree).map((p) => p.id)).toEqual(["a", "b", "c", "d"]);
   });
@@ -87,7 +88,7 @@ describe("getAllPanes", () => {
     const tree = split(
       "horizontal",
       leaf("a"),
-      split("vertical", leaf("b"), leaf("c"))
+      split("vertical", leaf("b"), leaf("c")),
     );
     expect(getAllPanes(tree).map((p) => p.id)).toEqual(["a", "b", "c"]);
   });
@@ -96,7 +97,7 @@ describe("getAllPanes", () => {
     const tree = split(
       "horizontal",
       leaf("a"),
-      split("vertical", leaf("b"), split("horizontal", leaf("c"), leaf("d")))
+      split("vertical", leaf("b"), split("horizontal", leaf("c"), leaf("d"))),
     );
     expect(getAllPanes(tree).map((p) => p.id)).toEqual(["a", "b", "c", "d"]);
   });
@@ -116,7 +117,7 @@ describe("replaceLeaf", () => {
   it("should replace leaf in split tree", () => {
     const tree = split("horizontal", leaf("a"), leaf("b"));
     const result = replaceLeaf(tree, "b", (original) =>
-      split("vertical", original, leaf("c"))
+      split("vertical", original, leaf("c")),
     );
     expect(result.type).toBe("split");
     if (result.type === "split") {
@@ -133,7 +134,7 @@ describe("replaceLeaf", () => {
     const tree = split(
       "horizontal",
       split("vertical", leaf("a"), leaf("b")),
-      leaf("c")
+      leaf("c"),
     );
     const result = replaceLeaf(tree, "a", () => leaf("x"));
     expect(getAllPanes(result).map((p) => p.id)).toEqual(["x", "b", "c"]);
@@ -164,7 +165,10 @@ describe("replaceLeaf", () => {
   });
 
   it("should preserve extra properties on split nodes via spread", () => {
-    const tree = { ...split("horizontal", leaf("a"), leaf("b")), extra: "data" } as PaneNode;
+    const tree = {
+      ...split("horizontal", leaf("a"), leaf("b")),
+      extra: "data",
+    } as PaneNode;
     const result = replaceLeaf(tree, "a", () => leaf("x"));
     expect((result as any).extra).toBe("data");
   });
@@ -189,7 +193,7 @@ describe("removePaneFromTree", () => {
     const tree = split(
       "horizontal",
       split("vertical", leaf("a"), leaf("b")),
-      leaf("c")
+      leaf("c"),
     );
     const result = removePaneFromTree(tree, "a");
     expect(getAllPanes(result).map((p) => p.id)).toEqual(["b", "c"]);
@@ -199,7 +203,7 @@ describe("removePaneFromTree", () => {
     const tree = split(
       "horizontal",
       leaf("a"),
-      split("vertical", leaf("b"), leaf("c"))
+      split("vertical", leaf("b"), leaf("c")),
     );
     const result = removePaneFromTree(tree, "c");
     expect(getAllPanes(result).map((p) => p.id)).toEqual(["a", "b"]);
@@ -209,7 +213,7 @@ describe("removePaneFromTree", () => {
     const tree = split(
       "horizontal",
       split("vertical", leaf("a"), leaf("b")),
-      split("vertical", leaf("c"), leaf("d"))
+      split("vertical", leaf("c"), leaf("d")),
     );
     const result = removePaneFromTree(tree, "b");
     expect(getAllPanes(result).map((p) => p.id)).toEqual(["a", "c", "d"]);
@@ -217,17 +221,16 @@ describe("removePaneFromTree", () => {
 
   it("should not modify tree when target is not found", () => {
     const tree = split("horizontal", leaf("a"), leaf("b"));
-    expect(getAllPanes(removePaneFromTree(tree, "z")).map((p) => p.id)).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(getAllPanes(removePaneFromTree(tree, "z")).map((p) => p.id)).toEqual(
+      ["a", "b"],
+    );
   });
 
   it("should preserve parent split direction after removal", () => {
     const tree = split(
       "vertical",
       split("horizontal", leaf("a"), leaf("b")),
-      leaf("c")
+      leaf("c"),
     );
     const result = removePaneFromTree(tree, "a");
     expect(result.type).toBe("split");

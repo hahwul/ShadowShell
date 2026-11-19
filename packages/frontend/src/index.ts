@@ -1,34 +1,40 @@
 import type { Caido } from "@caido/sdk-frontend";
-import type { API, BackendEvents } from "backend";
-import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import type { API, BackendEvents } from "backend";
+
 import {
-  type Preset,
-  getAllPresets,
-  updatePreset,
-  resetPreset,
+  escapeAttr,
+  escapeHtml,
+  sanitizeColor,
+  sanitizeSvgIcon,
+  toColorInputValue,
+} from "./helpers";
+import {
   addCustomPreset,
   deleteCustomPreset,
+  getAllPresets,
   ICONS,
+  type Preset,
+  resetPreset,
+  updatePreset,
 } from "./presets";
-import { escapeHtml, escapeAttr, sanitizeColor, sanitizeSvgIcon, toColorInputValue } from "./helpers";
+import "./styles/style.css";
 import {
   findPaneById,
   getAllPanes,
-  replaceLeaf,
-  removePaneFromTree,
-  type PaneNode,
   type LeafNode,
+  type PaneNode,
+  removePaneFromTree,
+  replaceLeaf,
   type SplitNode,
 } from "./tree";
 
-import "@xterm/xterm/css/xterm.css";
-import "./styles/style.css";
-
 type CaidoSDK = Caido<API, BackendEvents>;
 
-const PAGE_PATH = "/shadowshell" as const;
+const PAGE_PATH = "/shadowshell";
 const Commands = {
   newTab: "shadowshell.new-tab",
   closeTab: "shadowshell.close-tab",
@@ -41,7 +47,10 @@ const Commands = {
 } as const;
 
 function getCaidoVar(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
+    fallback
+  );
 }
 
 function isDarkMode(): boolean {
@@ -49,9 +58,18 @@ function isDarkMode(): boolean {
 }
 
 function getTheme() {
-  const bg = getCaidoVar("--p-surface-950", isDarkMode() ? "#09090b" : "#fafafa");
-  const fg = getCaidoVar("--p-text-color", isDarkMode() ? "#e4e4e7" : "#18181b");
-  const sel = getCaidoVar("--p-surface-700", isDarkMode() ? "#3f3f46" : "#d4d4d8");
+  const bg = getCaidoVar(
+    "--p-surface-950",
+    isDarkMode() ? "#09090b" : "#fafafa",
+  );
+  const fg = getCaidoVar(
+    "--p-text-color",
+    isDarkMode() ? "#e4e4e7" : "#18181b",
+  );
+  const sel = getCaidoVar(
+    "--p-surface-700",
+    isDarkMode() ? "#3f3f46" : "#d4d4d8",
+  );
 
   return {
     background: bg,
@@ -118,9 +136,21 @@ let searchBar: HTMLDivElement;
 
 // --- Pane Helpers ---
 
-async function resolveWorkingDirectory(sdk: CaidoSDK, preset?: Preset | null): Promise<string> {
-  if (preset?.defaultDirectory) return preset.defaultDirectory;
-  try { return await sdk.backend.getDefaultDirectory(); } catch { return ""; }
+async function resolveWorkingDirectory(
+  sdk: CaidoSDK,
+  preset?: Preset | null,
+): Promise<string> {
+  // typeof: presets come from localStorage, which can hold anything
+  if (
+    typeof preset?.defaultDirectory === "string" &&
+    preset.defaultDirectory !== ""
+  )
+    return preset.defaultDirectory;
+  try {
+    return await sdk.backend.getDefaultDirectory();
+  } catch {
+    return "";
+  }
 }
 
 function generatePaneId(): string {
@@ -145,11 +175,13 @@ function sendInput(backendId: string, data: string): void {
   if (queued !== undefined) return; // already draining this terminal
   void (async () => {
     let chunk: string | undefined;
-    while ((chunk = queuedInput.get(backendId))) {
+    while ((chunk = queuedInput.get(backendId)) !== undefined && chunk !== "") {
       queuedInput.set(backendId, "");
       // Bounded: one call that never settles must not freeze the terminal.
       await Promise.race([
-        sdkRef.backend.writeTerminal(backendId, chunk).catch(() => { /* backend reloading */ }),
+        sdkRef.backend.writeTerminal(backendId, chunk).catch(() => {
+          /* backend reloading */
+        }),
         new Promise((resolve) => setTimeout(resolve, INPUT_CALL_TIMEOUT_MS)),
       ]);
     }
@@ -175,20 +207,32 @@ function trackTerminal(backendId: string, alive: boolean): void {
 function stopTerminalsOnUnload(sdk: CaidoSDK): void {
   window.addEventListener("pagehide", (event) => {
     if (event.persisted) return; // kept in the back/forward cache, may come back
-    try { sessionStorage.setItem(OWNED_TERMINALS_KEY, JSON.stringify([...ownedTerminals])); } catch { /* storage unavailable */ }
+    try {
+      sessionStorage.setItem(
+        OWNED_TERMINALS_KEY,
+        JSON.stringify([...ownedTerminals]),
+      );
+    } catch {
+      /* storage unavailable */
+    }
     for (const id of ownedTerminals) quiet(sdk.backend.destroyTerminal(id));
   });
 }
 
 function destroyLeftoverTerminals(sdk: CaidoSDK): void {
   try {
-    const ids: unknown = JSON.parse(sessionStorage.getItem(OWNED_TERMINALS_KEY) || "[]");
+    const stored = sessionStorage.getItem(OWNED_TERMINALS_KEY);
+    const ids: unknown = JSON.parse(
+      stored !== null && stored !== "" ? stored : "[]",
+    );
     sessionStorage.removeItem(OWNED_TERMINALS_KEY);
     if (!Array.isArray(ids)) return;
     for (const id of ids) {
       if (typeof id === "string") quiet(sdk.backend.destroyTerminal(id));
     }
-  } catch { /* storage unavailable or corrupt */ }
+  } catch {
+    /* storage unavailable or corrupt */
+  }
 }
 
 // An exit can outrun the createTerminal reply that tells us the id (e.g. the
@@ -198,7 +242,8 @@ const unclaimedExits = new Map<string, number>();
 
 function noteUnclaimedExit(backendId: string, code: number): void {
   unclaimedExits.set(backendId, code);
-  if (unclaimedExits.size > 64) unclaimedExits.delete(unclaimedExits.keys().next().value!);
+  if (unclaimedExits.size > 64)
+    unclaimedExits.delete(unclaimedExits.keys().next().value);
 }
 
 // Registers a freshly created backend terminal; returns its exit code if it
@@ -219,21 +264,29 @@ const syncedSizes = new WeakMap<Terminal, string>();
 const resizing = new Set<string>();
 
 function syncBackendSize(backendId: string | null, terminal: Terminal): void {
-  if (!backendId || resizing.has(backendId)) return;
+  if (backendId === null || backendId === "" || resizing.has(backendId)) return;
   const key = `${backendId}:${terminal.cols}x${terminal.rows}`;
   if (syncedSizes.get(terminal) === key) return;
   syncedSizes.set(terminal, key);
   resizing.add(backendId);
-  sdkRef.backend.resizeTerminal(backendId, terminal.cols, terminal.rows).catch(() => {}).finally(() => {
-    resizing.delete(backendId);
-    syncBackendSize(backendId, terminal);
-  });
+  sdkRef.backend
+    .resizeTerminal(backendId, terminal.cols, terminal.rows)
+    .catch(() => {})
+    .finally(() => {
+      resizing.delete(backendId);
+      syncBackendSize(backendId, terminal);
+    });
 }
 
 // Fits a terminal to its container and pushes the new size to the backend.
 // A hidden or detached terminal measures 0x0; fitting it would shrink the PTY
 // to a couple of columns and make running programs re-wrap their output.
-function fitTerminal(element: HTMLElement, fitAddon: FitAddon, terminal: Terminal, backendId: string | null): void {
+function fitTerminal(
+  element: HTMLElement,
+  fitAddon: FitAddon,
+  terminal: Terminal,
+  backendId: string | null,
+): void {
   if (element.offsetWidth === 0 || element.offsetHeight === 0) return;
   try {
     fitAddon.fit();
@@ -243,7 +296,12 @@ function fitTerminal(element: HTMLElement, fitAddon: FitAddon, terminal: Termina
   syncBackendSize(backendId, terminal);
 }
 
-async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, cwd?: string): Promise<Pane> {
+async function createPane(
+  sdk: CaidoSDK,
+  command?: string,
+  presetName?: string,
+  cwd?: string,
+): Promise<Pane> {
   const id = generatePaneId();
 
   const element = document.createElement("div");
@@ -275,15 +333,17 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
   let backendId: string | null = null;
   try {
     backendId = await sdk.backend.createTerminal(
-      cwd || "",
-      command || "",
-      presetName || ""
+      cwd ?? "",
+      command ?? "",
+      presetName ?? "",
     );
   } catch (err) {
-    terminal.writeln(`\x1b[31m[ShadowShell] Failed to create terminal: ${err}\x1b[0m`);
+    terminal.writeln(
+      `\x1b[31m[ShadowShell] Failed to create terminal: ${err}\x1b[0m`,
+    );
   }
 
-  if (backendId) {
+  if (backendId !== null && backendId !== "") {
     const exitCode = claimTerminal(backendId);
     if (exitCode !== undefined) {
       terminal.writeln(`\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`);
@@ -291,10 +351,18 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
     }
   }
 
-  const pane: Pane = { id, backendId, terminal, fitAddon, searchAddon, element };
+  const pane: Pane = {
+    id,
+    backendId,
+    terminal,
+    fitAddon,
+    searchAddon,
+    element,
+  };
 
   terminal.onData((data) => {
-    if (pane.backendId) sendInput(pane.backendId, data);
+    if (pane.backendId !== null && pane.backendId !== "")
+      sendInput(pane.backendId, data);
   });
 
   return pane;
@@ -303,7 +371,7 @@ async function createPane(sdk: CaidoSDK, command?: string, presetName?: string, 
 // Kills the backend session and releases the xterm instance. Clearing
 // backendId first means late output/exit events no longer match this pane.
 function disposePane(sdk: CaidoSDK, pane: Pane): void {
-  if (pane.backendId) {
+  if (pane.backendId !== null && pane.backendId !== "") {
     quiet(sdk.backend.destroyTerminal(pane.backendId));
     trackTerminal(pane.backendId, false);
     pane.backendId = null;
@@ -318,7 +386,10 @@ function setActivePane(paneId: string): void {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (tab) {
     tab.container.querySelectorAll(".ss-pane").forEach((el) => {
-      el.classList.toggle("ss-pane--active", el.getAttribute("data-pane-id") === paneId);
+      el.classList.toggle(
+        "ss-pane--active",
+        el.getAttribute("data-pane-id") === paneId,
+      );
     });
   }
   updateStatusBar(sdkRef);
@@ -342,7 +413,11 @@ function fitAllPanes(node: PaneNode<Pane>): void {
 // overrides the `.ss-pane { flex: 1 }` default (which would otherwise make
 // width/height percentages ineffective and split every pane 50/50) and keeps
 // the divider's fixed size out of the ratio.
-function applyRatio(firstEl: HTMLElement, secondEl: HTMLElement, ratio: number): void {
+function applyRatio(
+  firstEl: HTMLElement,
+  secondEl: HTMLElement,
+  ratio: number,
+): void {
   firstEl.style.flex = `${ratio} 1 0`;
   secondEl.style.flex = `${1 - ratio} 1 0`;
 }
@@ -406,7 +481,7 @@ function renderPaneTree(node: PaneNode<Pane>): HTMLElement {
 
 async function splitPane(
   sdk: CaidoSDK,
-  direction: "horizontal" | "vertical"
+  direction: "horizontal" | "vertical",
 ): Promise<void> {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
@@ -415,7 +490,10 @@ async function splitPane(
   const targetId = activePaneId;
   if (!findPaneById(tab.root, targetId)) return;
 
-  const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
+  const preset =
+    tab.presetId !== undefined && tab.presetId !== ""
+      ? getAllPresets().find((p) => p.id === tab.presetId)
+      : null;
   const cwd = await resolveWorkingDirectory(sdk, preset);
 
   let newPane: Pane;
@@ -458,7 +536,10 @@ function closePane(sdk: CaidoSDK, paneId?: string): void {
   const tab = tabs.find((t) => t.id === activeTabId);
   if (!tab) return;
 
-  const pane = findPaneById(tab.root, paneId || activePaneId);
+  const pane = findPaneById(
+    tab.root,
+    paneId !== undefined && paneId !== "" ? paneId : activePaneId,
+  );
   if (!pane) return;
 
   // If this is the only pane, close the tab
@@ -490,9 +571,18 @@ function generateTabId(): string {
   return `tab-${++tabCounter}`;
 }
 
-async function createTab(sdk: CaidoSDK, name?: string, preset?: Preset): Promise<Tab> {
+async function createTab(
+  sdk: CaidoSDK,
+  name?: string,
+  preset?: Preset,
+): Promise<Tab> {
   const id = generateTabId();
-  const tabName = name || preset?.name || `Shell ${tabCounter}`;
+  const tabName =
+    name !== undefined && name !== ""
+      ? name
+      : typeof preset?.name === "string" && preset.name !== ""
+        ? preset.name
+        : `Shell ${tabCounter}`;
 
   // Stay hidden until registered: switchToTab() only knows about tabs in
   // `tabs`, so a container shown early could overlap another tab if the user
@@ -534,7 +624,9 @@ function switchToTab(sdk: CaidoSDK, tabId: string): void {
   const panes = getAllPanes(target.root);
   if (panes.length > 0 && !findPaneById(target.root, activePaneId)) {
     // The tab still carries the marker of the pane that was active in it.
-    const last = panes.find((p) => p.element.classList.contains("ss-pane--active"));
+    const last = panes.find((p) =>
+      p.element.classList.contains("ss-pane--active"),
+    );
     setActivePane((last ?? panes[0]!).id);
   }
 
@@ -631,8 +723,15 @@ function renderTabBar(sdk: CaidoSDK): void {
     const tabEl = document.createElement("div");
     tabEl.className = `ss-tab ${tab.id === activeTabId ? "ss-tab--active" : ""}`;
 
-    const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
-    const icon = sanitizeSvgIcon(preset?.icon || `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+    const preset =
+      tab.presetId !== undefined && tab.presetId !== ""
+        ? getAllPresets().find((p) => p.id === tab.presetId)
+        : null;
+    const icon = sanitizeSvgIcon(
+      preset?.icon !== undefined && preset.icon !== ""
+        ? preset.icon
+        : `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3l3 2-3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    );
 
     tabEl.innerHTML = `
       <span class="ss-tab__icon">${icon}</span>
@@ -641,7 +740,11 @@ function renderTabBar(sdk: CaidoSDK): void {
     `;
 
     tabEl.addEventListener("click", (e) => {
-      if (!(e.target as HTMLElement).closest(".ss-tab__close") && tab.id !== activeTabId) switchToTab(sdk, tab.id);
+      if (
+        !(e.target as HTMLElement).closest(".ss-tab__close") &&
+        tab.id !== activeTabId
+      )
+        switchToTab(sdk, tab.id);
     });
     tabEl.querySelector(".ss-tab__close")!.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -653,14 +756,21 @@ function renderTabBar(sdk: CaidoSDK): void {
       const input = document.createElement("input");
       input.className = "ss-tab__rename-input";
       input.value = tab.name;
-      input.addEventListener("blur", () => {
-        tab.name = input.value.trim() || tab.name;
-        renderTabBar(sdk);
-        updateStatusBar(sdk);
-      }, { once: true });
+      input.addEventListener(
+        "blur",
+        () => {
+          tab.name = input.value.trim() || tab.name;
+          renderTabBar(sdk);
+          updateStatusBar(sdk);
+        },
+        { once: true },
+      );
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") input.blur();
-        if (ev.key === "Escape") { input.value = tab.name; input.blur(); }
+        if (ev.key === "Escape") {
+          input.value = tab.name;
+          input.blur();
+        }
       });
       nameEl.replaceWith(input);
       input.focus();
@@ -678,7 +788,10 @@ function updateStatusBar(sdk: CaidoSDK): void {
     return;
   }
   const paneCount = getAllPanes(tab.root).length;
-  const preset = tab.presetId ? getAllPresets().find((p) => p.id === tab.presetId) : null;
+  const preset =
+    tab.presetId !== undefined && tab.presetId !== ""
+      ? getAllPresets().find((p) => p.id === tab.presetId)
+      : null;
 
   statusBar.innerHTML = `
     <span class="ss-status__item">
@@ -706,7 +819,10 @@ function renderPresetBar(sdk: CaidoSDK): void {
     btn.innerHTML = `<span class="ss-preset-btn__icon">${sanitizeSvgIcon(preset.icon)}</span><span class="ss-preset-btn__name">${escapeHtml(preset.name)}</span>`;
     btn.style.setProperty("--preset-color", sanitizeColor(preset.color));
     btn.addEventListener("click", () => createTab(sdk, undefined, preset));
-    btn.addEventListener("contextmenu", (e) => { e.preventDefault(); showPresetEditor(sdk, preset); });
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showPresetEditor(sdk, preset);
+    });
     presetBar.appendChild(btn);
   }
   const addBtn = document.createElement("button");
@@ -732,18 +848,51 @@ function buildToolbar(sdk: CaidoSDK): HTMLDivElement {
   const bar = document.createElement("div");
   bar.className = "ss-toolbar";
 
-  const items: Array<{ icon: string; title: string; action: () => void; separator?: boolean }> = [
-    { icon: TB.splitH, title: "Split horizontally (side by side)", action: () => splitPane(sdk, "horizontal") },
-    { icon: TB.splitV, title: "Split vertically (top / bottom)", action: () => splitPane(sdk, "vertical") },
-    { icon: TB.closePane, title: "Close active pane", action: () => closePane(sdk), separator: true },
+  const items: Array<{
+    icon: string;
+    title: string;
+    action: () => void;
+    separator?: boolean;
+  }> = [
+    {
+      icon: TB.splitH,
+      title: "Split horizontally (side by side)",
+      action: () => splitPane(sdk, "horizontal"),
+    },
+    {
+      icon: TB.splitV,
+      title: "Split vertically (top / bottom)",
+      action: () => splitPane(sdk, "vertical"),
+    },
+    {
+      icon: TB.closePane,
+      title: "Close active pane",
+      action: () => closePane(sdk),
+      separator: true,
+    },
     { icon: TB.search, title: "Search", action: toggleSearch, separator: true },
-    { icon: TB.fontUp, title: "Increase font size", action: () => changeFontSize(1) },
-    { icon: TB.fontDown, title: "Decrease font size", action: () => changeFontSize(-1) },
-    { icon: TB.clear, title: "Clear terminal", action: () => { getActivePane()?.terminal.clear(); }, separator: true },
+    {
+      icon: TB.fontUp,
+      title: "Increase font size",
+      action: () => changeFontSize(1),
+    },
+    {
+      icon: TB.fontDown,
+      title: "Decrease font size",
+      action: () => changeFontSize(-1),
+    },
+    {
+      icon: TB.clear,
+      title: "Clear terminal",
+      action: () => {
+        getActivePane()?.terminal.clear();
+      },
+      separator: true,
+    },
   ];
 
   for (const item of items) {
-    if (item.separator) {
+    if (item.separator === true) {
       const sep = document.createElement("div");
       sep.className = "ss-toolbar__sep";
       bar.appendChild(sep);
@@ -861,7 +1010,10 @@ function setupEvents(sdk: CaidoSDK): void {
   sdk.backend.onEvent("terminalOutput", (event) => {
     for (const tab of tabs) {
       const pane = findPaneByBackendId(tab.root, event.terminalId);
-      if (pane) { pane.terminal.write(event.data); break; }
+      if (pane) {
+        pane.terminal.write(event.data);
+        break;
+      }
     }
   });
 
@@ -870,12 +1022,15 @@ function setupEvents(sdk: CaidoSDK): void {
     for (const tab of tabs) {
       const pane = findPaneByBackendId(tab.root, event.terminalId);
       if (pane) {
-        pane.terminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`);
+        pane.terminal.writeln(
+          `\r\n\x1b[90m[Process exited with code ${event.code}]\x1b[0m`,
+        );
         pane.backendId = null;
         return;
       }
     }
-    if (event.terminalId !== dropupBackendId) noteUnclaimedExit(event.terminalId, event.code);
+    if (event.terminalId !== dropupBackendId)
+      noteUnclaimedExit(event.terminalId, event.code);
   });
 
   const resizeObserver = new ResizeObserver(() => {
@@ -883,16 +1038,20 @@ function setupEvents(sdk: CaidoSDK): void {
     if (tab) fitAllPanes(tab.root);
   });
 
-  if (terminalArea) {
-    resizeObserver.observe(terminalArea);
-  }
+  resizeObserver.observe(terminalArea);
 }
 
-function findPaneByBackendId(node: PaneNode<Pane>, backendId: string): Pane | null {
+function findPaneByBackendId(
+  node: PaneNode<Pane>,
+  backendId: string,
+): Pane | null {
   if (node.type === "leaf") {
     return node.pane.backendId === backendId ? node.pane : null;
   }
-  return findPaneByBackendId(node.first, backendId) || findPaneByBackendId(node.second, backendId);
+  return (
+    findPaneByBackendId(node.first, backendId) ||
+    findPaneByBackendId(node.second, backendId)
+  );
 }
 
 // --- Preset Editor (unchanged) ---
@@ -906,16 +1065,16 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
   overlay.className = "ss-modal-overlay";
   const modal = document.createElement("div");
   modal.className = "ss-modal";
-  const title = isNew ? "New Preset" : `Edit: ${preset!.name}`;
+  const title = isNew ? "New Preset" : `Edit: ${preset.name}`;
 
   modal.innerHTML = `
     <div class="ss-modal__header">${escapeHtml(title)}</div>
     <div class="ss-modal__body">
-      <label class="ss-modal__field"><span>Name</span><input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name || "")}" placeholder="My Preset" /></label>
-      <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command || "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
-      <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description || "")}" placeholder="Short description" /></label>
-      <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory || "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
-      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${escapeAttr(toColorInputValue(preset?.color || ""))}" /></label>
+      <label class="ss-modal__field"><span>Name</span><input type="text" class="ss-modal__input" data-field="name" value="${escapeAttr(preset?.name ?? "")}" placeholder="My Preset" /></label>
+      <label class="ss-modal__field"><span>Command</span><input type="text" class="ss-modal__input" data-field="command" value="${escapeAttr(preset?.command ?? "")}" placeholder="e.g. claude --dangerously-skip-permissions" /></label>
+      <label class="ss-modal__field"><span>Description</span><input type="text" class="ss-modal__input" data-field="description" value="${escapeAttr(preset?.description ?? "")}" placeholder="Short description" /></label>
+      <label class="ss-modal__field"><span>Default Directory</span><input type="text" class="ss-modal__input" data-field="defaultDirectory" value="${escapeAttr(preset?.defaultDirectory ?? "")}" placeholder="e.g. /home/user/projects (empty = use global setting)" /></label>
+      <label class="ss-modal__field"><span>Color</span><input type="color" class="ss-modal__input ss-modal__input--color" data-field="color" value="${escapeAttr(toColorInputValue(preset?.color ?? ""))}" /></label>
     </div>
     <div class="ss-modal__footer">
       ${isBuiltin ? `<button class="ss-modal__btn ss-modal__btn--reset" data-action="reset">Reset to default</button>` : ""}
@@ -928,44 +1087,91 @@ function showPresetEditor(sdk: CaidoSDK, preset: Preset | null): void {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   const firstInput = modal.querySelector("input") as HTMLInputElement;
-  firstInput?.focus(); firstInput?.select();
+  firstInput?.focus();
+  firstInput?.select();
 
   const closeModal = () => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
   };
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeModal();
+  });
   modal.addEventListener("click", async (e) => {
-    const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
-    if (!action) return;
-    if (action === "cancel") { closeModal(); return; }
-    if (action === "reset" && preset) { resetPreset(preset.id); closeModal(); renderPresetBar(sdk); return; }
-    if (action === "delete" && preset) { deleteCustomPreset(preset.id); closeModal(); renderPresetBar(sdk); return; }
+    const action = (e.target as HTMLElement)
+      .closest("[data-action]")
+      ?.getAttribute("data-action");
+    if (action === undefined || action === null || action === "") return;
+    if (action === "cancel") {
+      closeModal();
+      return;
+    }
+    if (action === "reset" && preset) {
+      resetPreset(preset.id);
+      closeModal();
+      renderPresetBar(sdk);
+      return;
+    }
+    if (action === "delete" && preset) {
+      deleteCustomPreset(preset.id);
+      closeModal();
+      renderPresetBar(sdk);
+      return;
+    }
     if (action === "save") {
-      const v = (f: string) => (modal.querySelector(`[data-field=${f}]`) as HTMLInputElement).value.trim();
+      const v = (f: string) =>
+        (
+          modal.querySelector(`[data-field=${f}]`) as HTMLInputElement
+        ).value.trim();
       const name = v("name");
-      if (!name) { (modal.querySelector("[data-field=name]") as HTMLInputElement).focus(); return; }
+      if (!name) {
+        (modal.querySelector("[data-field=name]") as HTMLInputElement).focus();
+        return;
+      }
       const defaultDirectory = v("defaultDirectory");
       if (defaultDirectory) {
         try {
           const valid = await sdk.backend.validateDirectory(defaultDirectory);
           if (!valid) {
-            const input = modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement;
+            const input = modal.querySelector(
+              "[data-field=defaultDirectory]",
+            ) as HTMLInputElement;
             input.style.borderColor = "#ef4444";
             input.focus();
             return;
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
       // Closed while validating (second Save click, Cancel, Escape): the
       // first click already saved, or the user backed out.
       if (!overlay.isConnected) return;
-      if (isNew) { addCustomPreset({ name, command: v("command"), description: v("description"), color: v("color") || "#6b7280", icon: ICONS.custom, defaultDirectory }); }
-      else { updatePreset(preset!.id, { name, command: v("command"), description: v("description"), color: v("color"), defaultDirectory }); }
-      closeModal(); renderPresetBar(sdk);
+      if (isNew) {
+        addCustomPreset({
+          name,
+          command: v("command"),
+          description: v("description"),
+          color: v("color") || "#6b7280",
+          icon: ICONS.custom,
+          defaultDirectory,
+        });
+      } else {
+        updatePreset(preset.id, {
+          name,
+          command: v("command"),
+          description: v("description"),
+          color: v("color"),
+          defaultDirectory,
+        });
+      }
+      closeModal();
+      renderPresetBar(sdk);
     }
   });
-  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") closeModal();
+  };
   document.addEventListener("keydown", onKey);
 }
 
@@ -976,10 +1182,14 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   let currentDefaultDir = "";
   try {
     currentPythonPath = await sdk.backend.getPythonPath();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   try {
     currentDefaultDir = await sdk.backend.getDefaultDirectory();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   // Only after the awaits: a second click while the first call is still
   // loading would otherwise remove nothing and stack a second modal.
   document.querySelector(".ss-modal-overlay")?.remove();
@@ -1012,33 +1222,48 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   const firstInput = modal.querySelector("input") as HTMLInputElement;
-  firstInput?.focus(); firstInput?.select();
+  firstInput?.focus();
+  firstInput?.select();
 
   const closeModal = () => {
     overlay.remove();
     document.removeEventListener("keydown", onKey);
   };
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeModal();
+  });
   modal.addEventListener("click", async (e) => {
-    const action = (e.target as HTMLElement).closest("[data-action]")?.getAttribute("data-action");
-    if (!action) return;
-    if (action === "cancel") { closeModal(); return; }
+    const action = (e.target as HTMLElement)
+      .closest("[data-action]")
+      ?.getAttribute("data-action");
+    if (action === undefined || action === null || action === "") return;
+    if (action === "cancel") {
+      closeModal();
+      return;
+    }
     if (action === "save") {
-      const defaultDirectory = (modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement).value.trim();
-      const pythonPath = (modal.querySelector("[data-field=pythonPath]") as HTMLInputElement).value.trim();
+      const defaultDirectory = (
+        modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement
+      ).value.trim();
+      const pythonPath = (
+        modal.querySelector("[data-field=pythonPath]") as HTMLInputElement
+      ).value.trim();
 
       // Validate and save default directory
       if (defaultDirectory) {
         try {
           const dirOk = await sdk.backend.setDefaultDirectory(defaultDirectory);
           if (!dirOk) {
-            const input = modal.querySelector("[data-field=defaultDirectory]") as HTMLInputElement;
+            const input = modal.querySelector(
+              "[data-field=defaultDirectory]",
+            ) as HTMLInputElement;
             input.style.borderColor = "#ef4444";
-            const hint = modal.querySelector("[data-hint=directory]") as HTMLDivElement;
-            if (hint) {
-              hint.textContent = "Directory not found. Please enter a valid directory path.";
-              hint.classList.add("ss-modal__hint--error");
-            }
+            const hint = modal.querySelector(
+              "[data-hint=directory]",
+            ) as HTMLDivElement;
+            hint.textContent =
+              "Directory not found. Please enter a valid directory path.";
+            hint.classList.add("ss-modal__hint--error");
             input.focus();
             return;
           }
@@ -1046,20 +1271,27 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
           return;
         }
       } else {
-        try { await sdk.backend.setDefaultDirectory(""); } catch { /* ignore */ }
+        try {
+          await sdk.backend.setDefaultDirectory("");
+        } catch {
+          /* ignore */
+        }
       }
 
       // Validate and save python path
       try {
         const ok = await sdk.backend.setPythonPath(pythonPath);
         if (!ok) {
-          const input = modal.querySelector("[data-field=pythonPath]") as HTMLInputElement;
+          const input = modal.querySelector(
+            "[data-field=pythonPath]",
+          ) as HTMLInputElement;
           input.style.borderColor = "#ef4444";
-          const hint = modal.querySelector("[data-hint=python]") as HTMLDivElement;
-          if (hint) {
-            hint.textContent = "Path not found. Please enter a valid Python 3 binary path.";
-            hint.classList.add("ss-modal__hint--error");
-          }
+          const hint = modal.querySelector(
+            "[data-hint=python]",
+          ) as HTMLDivElement;
+          hint.textContent =
+            "Path not found. Please enter a valid Python 3 binary path.";
+          hint.classList.add("ss-modal__hint--error");
           input.focus();
           return;
         }
@@ -1069,7 +1301,9 @@ async function showSettingsModal(sdk: CaidoSDK): Promise<void> {
       closeModal();
     }
   });
-  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closeModal(); };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") closeModal();
+  };
   document.addEventListener("keydown", onKey);
 }
 
@@ -1102,7 +1336,8 @@ function toggleDropup(sdk: CaidoSDK): void {
   if (dropupVisible) {
     // The previous shell exited (e.g. the user typed `exit`): start a fresh
     // one instead of leaving a dead terminal that can never be revived.
-    if (!dropupBackendId && !dropupStarting) startDropupSession(sdk);
+    if ((dropupBackendId === null || dropupBackendId === "") && !dropupStarting)
+      startDropupSession(sdk);
     setTimeout(() => {
       fitDropup();
       if (dropupVisible) dropupTerminal?.focus();
@@ -1117,25 +1352,33 @@ function toggleDropup(sdk: CaidoSDK): void {
 function startDropupSession(sdk: CaidoSDK): void {
   dropupStarting = true;
   // Create backend session (use global default directory)
-  resolveWorkingDirectory(sdk).then((dir) => {
-    return sdk.backend.createTerminal(dir, "", "Shell");
-  }).then((id) => {
-    const pending = dropupPendingInput.join("");
-    dropupPendingInput = [];
-    const exitCode = claimTerminal(id);
-    if (exitCode !== undefined) {
-      dropupTerminal?.writeln(`\x1b[90m[Process exited with code ${exitCode} — reopen to start a new shell]\x1b[0m`);
-      return;
-    }
-    dropupBackendId = id;
-    if (pending) sendInput(id, pending);
-    fitDropup();
-  }).catch(() => {
-    dropupPendingInput = [];
-    dropupTerminal?.writeln("\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m");
-  }).finally(() => {
-    dropupStarting = false;
-  });
+  resolveWorkingDirectory(sdk)
+    .then((dir) => {
+      return sdk.backend.createTerminal(dir, "", "Shell");
+    })
+    .then((id) => {
+      const pending = dropupPendingInput.join("");
+      dropupPendingInput = [];
+      const exitCode = claimTerminal(id);
+      if (exitCode !== undefined) {
+        dropupTerminal?.writeln(
+          `\x1b[90m[Process exited with code ${exitCode} — reopen to start a new shell]\x1b[0m`,
+        );
+        return;
+      }
+      dropupBackendId = id;
+      if (pending) sendInput(id, pending);
+      fitDropup();
+    })
+    .catch(() => {
+      dropupPendingInput = [];
+      dropupTerminal?.writeln(
+        "\x1b[31m[ShadowShell] Failed to create terminal session\x1b[0m",
+      );
+    })
+    .finally(() => {
+      dropupStarting = false;
+    });
 }
 
 function createDropupPanel(sdk: CaidoSDK): void {
@@ -1154,7 +1397,9 @@ function createDropupPanel(sdk: CaidoSDK): void {
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
   `;
-  header.querySelector(".ss-dropup__close")!.addEventListener("click", () => toggleDropup(sdk));
+  header
+    .querySelector(".ss-dropup__close")!
+    .addEventListener("click", () => toggleDropup(sdk));
 
   // Terminal container
   const termContainer = document.createElement("div");
@@ -1181,7 +1426,7 @@ function createDropupPanel(sdk: CaidoSDK): void {
   dropupTerminal.open(termContainer);
 
   dropupTerminal.onData((data) => {
-    if (dropupBackendId) {
+    if (dropupBackendId !== null && dropupBackendId !== "") {
       sendInput(dropupBackendId, data);
     } else if (dropupStarting) {
       dropupPendingInput.push(data);
@@ -1198,7 +1443,9 @@ function createDropupPanel(sdk: CaidoSDK): void {
 
     sdk.backend.onEvent("terminalExit", (event) => {
       if (event.terminalId === dropupBackendId && dropupTerminal) {
-        dropupTerminal.writeln(`\r\n\x1b[90m[Process exited with code ${event.code} — reopen to start a new shell]\x1b[0m`);
+        dropupTerminal.writeln(
+          `\r\n\x1b[90m[Process exited with code ${event.code} — reopen to start a new shell]\x1b[0m`,
+        );
         dropupBackendId = null;
       }
     });
@@ -1220,16 +1467,45 @@ export const init = (sdk: CaidoSDK) => {
   renderPresetBar(sdk);
 
   sdk.navigation.addPage(PAGE_PATH, { body });
-  sdk.sidebar.registerItem("ShadowShell", PAGE_PATH, { icon: "fas fa-terminal" });
+  sdk.sidebar.registerItem("ShadowShell", PAGE_PATH, {
+    icon: "fas fa-terminal",
+  });
 
-  sdk.commands.register(Commands.newTab, { name: "ShadowShell: New Tab", run: () => createTab(sdk) });
-  sdk.commands.register(Commands.closeTab, { name: "ShadowShell: Close Tab", run: () => { if (activeTabId) closeTab(sdk, activeTabId); } });
-  sdk.commands.register(Commands.togglePanel, { name: "ShadowShell: Open Full Page", run: () => sdk.navigation.goTo(PAGE_PATH) });
-  sdk.commands.register(Commands.toggleDropup, { name: "ShadowShell: Quick Terminal", run: () => toggleDropup(sdk) });
-  sdk.commands.register(Commands.splitVertical, { name: "ShadowShell: Split Right", run: () => splitPane(sdk, "horizontal") });
-  sdk.commands.register(Commands.splitHorizontal, { name: "ShadowShell: Split Down", run: () => splitPane(sdk, "vertical") });
-  sdk.commands.register(Commands.closePane, { name: "ShadowShell: Close Pane", run: () => closePane(sdk) });
-  sdk.commands.register(Commands.search, { name: "ShadowShell: Search", run: toggleSearch });
+  sdk.commands.register(Commands.newTab, {
+    name: "ShadowShell: New Tab",
+    run: () => createTab(sdk),
+  });
+  sdk.commands.register(Commands.closeTab, {
+    name: "ShadowShell: Close Tab",
+    run: () => {
+      if (activeTabId !== null && activeTabId !== "")
+        closeTab(sdk, activeTabId);
+    },
+  });
+  sdk.commands.register(Commands.togglePanel, {
+    name: "ShadowShell: Open Full Page",
+    run: () => sdk.navigation.goTo(PAGE_PATH),
+  });
+  sdk.commands.register(Commands.toggleDropup, {
+    name: "ShadowShell: Quick Terminal",
+    run: () => toggleDropup(sdk),
+  });
+  sdk.commands.register(Commands.splitVertical, {
+    name: "ShadowShell: Split Right",
+    run: () => splitPane(sdk, "horizontal"),
+  });
+  sdk.commands.register(Commands.splitHorizontal, {
+    name: "ShadowShell: Split Down",
+    run: () => splitPane(sdk, "vertical"),
+  });
+  sdk.commands.register(Commands.closePane, {
+    name: "ShadowShell: Close Pane",
+    run: () => closePane(sdk),
+  });
+  sdk.commands.register(Commands.search, {
+    name: "ShadowShell: Search",
+    run: toggleSearch,
+  });
 
   sdk.commandPalette.register(Commands.toggleDropup);
   sdk.commandPalette.register(Commands.newTab);
