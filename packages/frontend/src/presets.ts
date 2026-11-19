@@ -74,7 +74,7 @@ export const BUILTIN_PRESETS: Preset[] = [
     name: "Shell",
     icon: ICONS.terminal,
     command: "",
-    description: "Default shell",
+    description: "Your login shell",
     color: "#6b7280",
     builtin: true,
   },
@@ -130,18 +130,34 @@ export function saveCustomPresets(presets: Preset[]): void {
   localStorage.setItem(CUSTOM_KEY, JSON.stringify(presets));
 }
 
+// Stored fields the UI treats as text but that may hold anything (a number
+// made the preset editor throw on open); non-strings are dropped.
+const textOnly = (p: Partial<Preset>): Partial<Preset> =>
+  Object.fromEntries(
+    Object.entries(p).filter(([, v]) => typeof v === "string"),
+  );
+
 export function getAllPresets(): Preset[] {
   const overrides = loadOverrides();
   const builtins = BUILTIN_PRESETS.map((p) => {
     const ov = overrides[p.id];
     if (!ov) return p;
-    return { ...p, ...ov, id: p.id, icon: p.icon, builtin: true };
+    return { ...p, ...textOnly(ov), id: p.id, icon: p.icon, builtin: true };
   });
-  const customs = loadCustomPresets().map((p) => ({
-    ...p,
-    icon: p.icon || ICONS.custom,
-    builtin: false,
-  }));
+  const customs = loadCustomPresets().map((p) => {
+    const text = textOnly(p);
+    return {
+      command: "",
+      description: "",
+      color: "",
+      ...text,
+      id: p.id,
+      name: p.name,
+      icon:
+        text.icon !== undefined && text.icon !== "" ? text.icon : ICONS.custom,
+      builtin: false,
+    };
+  });
   return [...builtins, ...customs];
 }
 

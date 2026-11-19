@@ -22,14 +22,34 @@ import {
 
 const RELAY_SCRIPT = `#!/usr/bin/env python3
 """ShadowShell PTY relay over raw TCP."""
-import sys, os, pty, select, signal, struct, socket, fcntl, termios, json, traceback, secrets, hmac, time
+import sys, os, pty, pwd, select, signal, struct, socket, fcntl, termios, json, traceback, secrets, hmac, time
 
-SHELL = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SHELL", "/bin/zsh")
+# Never started as the user's shell: account placeholders, and csh/tcsh, which
+# reject the "-i -l" the shell is started with below.
+NOT_A_SHELL = ("nologin", "false", "true", "sync", "halt", "shutdown", "git-shell", "csh", "tcsh")
+
+def pick_shell(fallback):
+    # The backend cannot read the environment, so the user's shell is chosen
+    # here: $SHELL, then the account's login shell, then the backend's guess.
+    candidates = [os.environ.get("SHELL")]
+    try:
+        candidates.append(pwd.getpwuid(os.getuid()).pw_shell)
+    except KeyError:
+        pass
+    for shell in candidates:
+        if (shell and os.path.isabs(shell) and os.path.isfile(shell)
+                and os.access(shell, os.X_OK)
+                and os.path.basename(shell) not in NOT_A_SHELL):
+            return shell
+    return fallback
+
+SHELL = pick_shell(sys.argv[1] if len(sys.argv) > 1 else "/bin/sh")
 CWD = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("HOME", "/")
 LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "relay.log")
 LOG_CAP = 1024 * 1024
 ACCEPT_TIMEOUT = 30
 AUTH_TIMEOUT = 1
+DRAIN_IDLE = 10
 
 def log(msg):
     try:
@@ -142,14 +162,15 @@ def accept_client(srv, token):
         except OSError: pass
 
 def drain(conn, out_buf):
-    # Best-effort flush of pending output before disconnecting.
+    # Flush pending output before disconnecting. Each send waits up to
+    # DRAIN_IDLE for the client to take something, so a backend that is busy
+    # still gets the tail of the output, while one that stopped reading (or
+    # went away: send fails) cannot keep this relay alive.
     try:
-        conn.setblocking(True)
-        conn.settimeout(1.0)
-        while out_buf:
-            sent = conn.send(out_buf)
-            if sent <= 0: break
-            out_buf = out_buf[sent:]
+        conn.settimeout(DRAIN_IDLE)
+        view = memoryview(out_buf)
+        while view:
+            view = view[conn.send(view):]
     except Exception:
         pass
 
@@ -403,6 +424,9 @@ interface TerminalOutputEvent {
 interface TerminalExitEvent {
   terminalId: string;
   code: number;
+  // Why the relay never started (Python missing or not runnable, ...); unset
+  // for a terminal that ran and then exited.
+  error?: string;
 }
 
 // --- State ---
@@ -417,6 +441,10 @@ const SETTINGS_FILE = join(SETTINGS_DIR, "settings.json");
 const READY_RE = /READY:(\d+):([0-9a-f]+)\r?\n/;
 const MAX_PENDING_INPUT = 1024 * 1024; // UTF-16 code units
 const RELAY_EXIT_GRACE_MS = 2000;
+// stderr can trail the exit of a relay that failed to start.
+const RELAY_STDERR_GRACE_MS = 100;
+const RELAY_STDERR_TAIL = 500;
+const MAX_OUTPUT_EVENT = 256 * 1024; // UTF-16 code units per output event
 
 function loadSettings(): { pythonPath?: string; defaultDirectory?: string } {
   return _loadSettings(SETTINGS_FILE);
@@ -487,16 +515,14 @@ function createTerminal(
   presetName: string,
 ): string {
   const id = generateId();
+  // Only a fallback: the relay prefers $SHELL, then the account's login shell.
   const shell = getDefaultShell();
   const home = homedir() || "/";
   const workingDir = cwd || home;
   const scriptPath = ensureRelayScript();
+  const python = findPython3Local();
 
-  const proc: ChildProcess = spawn(findPython3Local(), [
-    scriptPath,
-    shell,
-    workingDir,
-  ]);
+  const proc: ChildProcess = spawn(python, [scriptPath, shell, workingDir]);
 
   const session: TerminalSession = {
     id,
@@ -514,6 +540,23 @@ function createTerminal(
   };
 
   terminals.set(id, session);
+
+  // Output is sent once per tick rather than once per socket chunk: a busy
+  // shell delivers ~1 KB chunks (thousands per second), each of which would
+  // otherwise be its own event to the frontend.
+  let pendingOutput = "";
+  const flushOutput = () => {
+    if (pendingOutput === "") return;
+    const data = pendingOutput;
+    pendingOutput = "";
+    sdk.api.send("terminalOutput", { terminalId: id, data });
+  };
+  const queueOutput = (data: string) => {
+    if (pendingOutput === "") setTimeout(flushOutput, 0);
+    pendingOutput += data;
+    // ponytail: size cap guessed; keeps one event well below any transport limit
+    if (pendingOutput.length >= MAX_OUTPUT_EVENT) flushOutput();
+  };
 
   let stdoutBuf = "";
   if (proc.stdout) {
@@ -569,21 +612,16 @@ function createTerminal(
         carry = rest.length ? rest : null;
         if (complete.length === 0) return;
         // Raw PTY output -> forward to frontend
-        sdk.api.send("terminalOutput", {
-          terminalId: id,
-          data: complete.toString("utf-8"),
-        });
+        queueOutput(complete.toString("utf-8"));
       });
 
       const onDisconnect = () => {
         if (carry) {
           // Emit a dangling partial sequence (as U+FFFD) rather than drop it.
-          sdk.api.send("terminalOutput", {
-            terminalId: id,
-            data: carry.toString("utf-8"),
-          });
+          queueOutput(carry.toString("utf-8"));
           carry = null;
         }
+        flushOutput();
         session.socket = null;
         session.closed = true;
       };
@@ -614,27 +652,51 @@ function createTerminal(
     });
   }
 
+  let stderrTail = "";
   if (proc.stderr) {
     proc.stderr.on("data", (data: Buffer) => {
-      sdk.console.log(`[relay stderr] ${data.toString()}`);
+      const text = data.toString();
+      sdk.console.log(`[relay stderr] ${text}`);
+      stderrTail = (stderrTail + text).slice(-RELAY_STDERR_TAIL);
     });
   }
 
+  // Gone before it reported READY, and not because we stopped it: the relay
+  // itself did not start, which the user can usually fix (Python path).
+  const failedToStart = () => !session.connected && !session.isTerminating;
+
   // "exit" may or may not follow "error" (e.g. a missing python binary only
   // emits "error"), so report the exit exactly once from either path.
-  const finish = (code: number) => {
+  const finish = (code: number, spawnError?: string) => {
     if (session.exited) return;
     session.exited = true;
     session.closed = true;
     if (terminals.get(id) === session) terminals.delete(id);
-    sdk.api.send("terminalExit", { terminalId: id, code });
+    flushOutput(); // the output comes before the exit notice
+    const event: TerminalExitEvent = { terminalId: id, code };
+    if (failedToStart()) {
+      const reason =
+        spawnError ?? (stderrTail.trim() || `exited with code ${code}`);
+      // Shown in a terminal: drop control characters (escape sequences in
+      // stderr would be interpreted), keep line breaks
+      event.error = Array.from(`${python}: ${reason}`, (c) => {
+        const n = c.charCodeAt(0);
+        const control = n < 0x20 || (n >= 0x7f && n < 0xa0);
+        return control && c !== "\n" ? "" : c;
+      }).join("");
+    }
+    sdk.api.send("terminalExit", event);
   };
 
-  proc.on("exit", (code) => finish(code ?? -1));
+  proc.on("exit", (code) => {
+    if (failedToStart())
+      setTimeout(() => finish(code ?? -1), RELAY_STDERR_GRACE_MS);
+    else finish(code ?? -1);
+  });
 
   proc.on("error", (err) => {
     sdk.console.log(`[relay error] ${err.message}`);
-    finish(-1);
+    finish(-1, err.message);
   });
 
   sdk.console.log(`Terminal ${id} starting`);
@@ -729,13 +791,13 @@ function listTerminals(
   }));
 }
 
+// No shell here: the relay picks it (see pick_shell), the backend only
+// supplies a fallback.
 function getShellInfo(sdk: SDK<API, BackendEvents>): {
-  defaultShell: string;
   platform: string;
   home: string;
 } {
   return {
-    defaultShell: getDefaultShell(),
     platform: platform(),
     home: homedir() || "/",
   };

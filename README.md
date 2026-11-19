@@ -30,7 +30,7 @@ Multi-terminal plugin for [Caido](https://caido.io) — run multiple terminals w
 | Claude | `claude` | Anthropic Claude Code CLI |
 | Gemini | `gemini` | Google Gemini CLI |
 | Codex | `codex` | OpenAI Codex CLI |
-| Shell | *(default)* | Default system shell |
+| Shell | *(default)* | Your login shell (`$SHELL`) |
 
 All built-in presets can be customized (command, name, description), and you can add your own.
 
@@ -38,7 +38,9 @@ All built-in presets can be customized (command, name, description), and you can
 
 ## Requirements
 
-- **Python 3** — The backend uses a Python PTY relay to manage terminal sessions. Python 3 is auto-detected from common paths (`/usr/bin/python3`, `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`), or you can set a custom path in Settings.
+- **Python 3** — The backend uses a Python PTY relay to manage terminal sessions. Python 3 is auto-detected from common paths (`/usr/bin/python3`, `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`), or you can set a custom path in Settings. On macOS, `/usr/bin/python3` only works once the Command Line Tools are installed (`xcode-select --install`); if a terminal says it could not start, install them or set another Python 3 in Settings.
+
+Terminals run your shell from `$SHELL`, falling back to your account's login shell, then to the first of zsh, bash and sh.
 
 ## Installation
 
@@ -60,18 +62,18 @@ pnpm build
 ## Disclosures
 
 - **Python 3 subprocess**: The backend spawns a Python 3 process per terminal session to create and manage PTY (pseudo-terminal) pairs. The path is auto-detected or configurable via Settings. No external network calls are made by these processes.
-- **Local TCP communication**: Each terminal session uses a localhost TCP port (range 18500–32767) for internal communication between the Node.js backend and the Python PTY relay. All traffic is local-only and never leaves the machine.
+- **Local TCP communication**: Each terminal session uses an OS-assigned localhost TCP port for internal communication between the plugin backend and the Python PTY relay. The relay only accepts a connection that presents a one-time token it gave the backend. All traffic is local-only and never leaves the machine.
 - **No telemetry or external services**: This plugin does not collect any data, send telemetry, or connect to external servers.
 
 ## Architecture
 
 ```
 packages/
-  backend/   # PTY relay (Python) + TCP bridge (Node.js)
+  backend/   # PTY relay (Python) + TCP bridge (Caido backend)
   frontend/  # xterm.js terminals, tab/pane management, preset UI
 ```
 
-The backend spawns a Python PTY relay per terminal session, communicating over a local TCP socket with length-prefixed JSON messages. The frontend renders terminals using xterm.js and manages tabs, splits, and preset configuration via localStorage.
+The backend spawns a Python PTY relay per terminal session, communicating over a local TCP socket: length-prefixed JSON messages (input, resize) to the relay, raw terminal output back. The frontend renders terminals using xterm.js and manages tabs, splits, and preset configuration via localStorage.
 
 ## License
 
